@@ -1,6 +1,6 @@
 # MindfulTab
 
-MindfulTab is a browser companion to MindfulHome: timer-first, soft nudges, no hard blocks.
+MindfulTab is a browser companion to [MindfulHome](https://github.com/Fdondi/MindfulHome): timer-first, soft nudges, no hard blocks.
 
 This extension overrides the New Tab page with a phone-like timer screen, then adds:
 
