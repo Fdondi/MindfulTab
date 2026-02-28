@@ -31,12 +31,11 @@ const ui = {
   urlInput: document.getElementById("url-input"),
   goBtn: document.getElementById("go-btn"),
   historyModeSelect: document.getElementById("history-mode-select"),
+  settingsBtn: document.getElementById("settings-btn"),
   shortcutsSection: document.getElementById("shortcuts-section"),
   shortcutsList: document.getElementById("shortcuts-list"),
   suggestionsSection: document.getElementById("suggestions-section"),
-  suggestionsList: document.getElementById("suggestions-list"),
-  karmaSection: document.getElementById("karma-section"),
-  karmaList: document.getElementById("karma-list")
+  suggestionsList: document.getElementById("suggestions-list")
 };
 
 function buildWheel() {
@@ -118,24 +117,6 @@ function renderStatus() {
   ui.homeTimerStatus.textContent = `${formatDuration(msRemaining)} remaining`;
 }
 
-function renderKarma() {
-  const entries = Object.entries(state.karmaByDomain || {}).sort((a, b) => a[0].localeCompare(b[0]));
-  if (!entries.length) {
-    ui.karmaSection.classList.add("hidden");
-    ui.karmaList.innerHTML = "";
-    return;
-  }
-
-  ui.karmaSection.classList.remove("hidden");
-  ui.karmaList.innerHTML = "";
-  for (const [domain, score] of entries.slice(0, 10)) {
-    const row = document.createElement("li");
-    row.className = "karma-row";
-    row.textContent = `${domain} ${score > 0 ? `+${score}` : score}`;
-    ui.karmaList.appendChild(row);
-  }
-}
-
 function getTopDomains() {
   return Object.entries(state.domainVisits || {})
     .sort((a, b) => b[1] - a[1])
@@ -207,7 +188,6 @@ async function refreshState() {
   state.settings = { ...DEFAULTS, ...(response.settings || {}) };
   ui.historyModeSelect.value = state.settings.historyMode || "both_with_toggle";
   renderStatus();
-  renderKarma();
   renderShortcuts();
 }
 
@@ -369,6 +349,9 @@ function bindEvents() {
       .then(() => rebuildSearchIndex())
       .then(() => searchByIntent(ui.urlInput.value || ""))
       .catch(() => {});
+  });
+  ui.settingsBtn.addEventListener("click", () => {
+    self.EXT_API.runtime.openOptionsPage().catch(() => {});
   });
 }
 

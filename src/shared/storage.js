@@ -5,6 +5,7 @@ const STORAGE_KEYS = {
   SETTINGS: "settings",
   ACTIVE_SESSION: "activeSession",
   KARMA_BY_DOMAIN: "karmaByDomain",
+  OPT_OUT_DOMAINS: "optOutDomains",
   DOMAIN_VISITS: "domainVisits",
   VISITED_LINKS: "visitedLinks",
   SEARCH_INDEX: "searchIndex",
@@ -55,6 +56,15 @@ async function getKarmaByDomain() {
 
 async function setKarmaByDomain(karmaByDomain) {
   return setStorageValues({ [STORAGE_KEYS.KARMA_BY_DOMAIN]: karmaByDomain });
+}
+
+async function getOptOutDomains() {
+  const result = await getStorageValues(STORAGE_KEYS.OPT_OUT_DOMAINS);
+  return result[STORAGE_KEYS.OPT_OUT_DOMAINS] || {};
+}
+
+async function setOptOutDomains(optOutDomains) {
+  return setStorageValues({ [STORAGE_KEYS.OPT_OUT_DOMAINS]: optOutDomains });
 }
 
 async function getDomainVisits() {
@@ -138,6 +148,8 @@ self.setActiveSession = setActiveSession;
 self.clearActiveSession = clearActiveSession;
 self.getKarmaByDomain = getKarmaByDomain;
 self.setKarmaByDomain = setKarmaByDomain;
+self.getOptOutDomains = getOptOutDomains;
+self.setOptOutDomains = setOptOutDomains;
 self.getDomainVisits = getDomainVisits;
 self.setDomainVisits = setDomainVisits;
 self.getVisitedLinks = getVisitedLinks;

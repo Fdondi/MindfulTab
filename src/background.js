@@ -147,7 +147,10 @@ async function finishTimerIfNeeded() {
   const targetDomain = activeDomain || session.domain;
   const endedSession = { ...session, domain: targetDomain, ended: true, nudgedAt: Date.now() };
   await setActiveSession(endedSession);
-  await applyOverrunPenalty(targetDomain, 1);
+  const optOutDomains = await getOptOutDomains();
+  if (!optOutDomains[targetDomain]) {
+    await applyOverrunPenalty(targetDomain, 1);
+  }
   await appendHistory({ type: "session_ended", atIso: nowIso(), session: endedSession });
 
   try {
@@ -193,7 +196,12 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const domain = getDomainFromUrl(url);
   if (!domain) return;
 
-  const [karmaByDomain, settings] = await Promise.all([getKarmaByDomain(), getSettings()]);
+  const [karmaByDomain, settings, optOutDomains] = await Promise.all([
+    getKarmaByDomain(),
+    getSettings(),
+    getOptOutDomains()
+  ]);
+  if (optOutDomains[domain]) return;
   const score = karmaByDomain[domain] || 0;
   const karmaState = karmaStateForScore(score, settings.hideThresholds || DEFAULT_SETTINGS.hideThresholds);
 
@@ -313,6 +321,55 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await EXT_API.tabs.update(tabId, { url: targetUrl });
       }
       sendResponse({ ok: true });
+      return;
+    }
+
+    if (message?.type === "mindfultab/get-karma-settings") {
+      const [karmaByDomain, optOutDomains, domainVisits] = await Promise.all([
+        getKarmaByDomain(),
+        getOptOutDomains(),
+        getDomainVisits()
+      ]);
+      sendResponse({ ok: true, karmaByDomain, optOutDomains, domainVisits });
+      return;
+    }
+
+    if (message?.type === "mindfultab/forgive-karma") {
+      const domain = String(message.payload?.domain || "").trim().toLowerCase();
+      if (!domain) {
+        sendResponse({ ok: false, error: "Domain is required" });
+        return;
+      }
+      const score = await applyRecovery(domain, 1);
+      await appendHistory({
+        type: "karma_forgiven",
+        atIso: nowIso(),
+        domain
+      });
+      sendResponse({ ok: true, domain, score });
+      return;
+    }
+
+    if (message?.type === "mindfultab/set-domain-opt-out") {
+      const domain = String(message.payload?.domain || "").trim().toLowerCase();
+      const optedOut = Boolean(message.payload?.optedOut);
+      if (!domain) {
+        sendResponse({ ok: false, error: "Domain is required" });
+        return;
+      }
+      const optOutDomains = await getOptOutDomains();
+      if (optedOut) {
+        optOutDomains[domain] = true;
+      } else {
+        delete optOutDomains[domain];
+      }
+      await setOptOutDomains(optOutDomains);
+      await appendHistory({
+        type: optedOut ? "domain_opt_out_enabled" : "domain_opt_out_disabled",
+        atIso: nowIso(),
+        domain
+      });
+      sendResponse({ ok: true, domain, optedOut });
       return;
     }
 

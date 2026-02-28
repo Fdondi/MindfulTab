@@ -6,9 +6,12 @@ This extension overrides the New Tab page with a phone-like timer screen, then a
 
 - soft nudge notification when timer ends
 - domain karma scoring based on overrun behavior
+- one-click karma forgiveness for accidental overruns
+- permanent per-domain opt-out for long-running allowed sites
 - graduated hiding of frequent-site shortcuts
 - reflection gate for low-karma domains that always allows "continue anyway"
 - post-start home view with favorites, URL bar, and intent suggestions
+- dedicated Settings page for karma and opt-out management
 
 ## Browser support
 
@@ -31,6 +34,9 @@ One codebase is used for both browsers.
 - `src/newtab/newtab.html`: New Tab UI
 - `src/newtab/newtab.css`: phone-like visual style
 - `src/newtab/newtab.js`: wheel timer, timer/home state machine, URL bar, suggestions
+- `src/settings/settings.html`: dedicated karma and domain opt-out settings UI
+- `src/settings/settings.css`: settings UI styles
+- `src/settings/settings.js`: settings interactions (forgive + opt-out toggles)
 - `src/shared/storage.js`: storage helpers and keys
 - `src/shared/karma.js`: karma scoring helpers
 - `src/search/embeddings.js`: local lightweight embedding utilities

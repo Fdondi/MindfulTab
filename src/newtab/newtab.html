@@ -35,7 +35,10 @@
       <section id="home-view" class="home-view hidden">
         <header class="home-header">
           <h2 class="home-title">MindfulTab</h2>
-          <p id="home-timer-status" class="home-timer-status"></p>
+          <div class="home-header-actions">
+            <p id="home-timer-status" class="home-timer-status"></p>
+            <button id="settings-btn" class="settings-btn" type="button">Settings</button>
+          </div>
         </header>
 
         <div class="search-box">
@@ -69,10 +72,6 @@
         </section>
       </section>
 
-      <section id="karma-section" class="secondary-card hidden">
-        <h2 class="secondary-title">Domain Karma</h2>
-        <ul id="karma-list" class="karma-list"></ul>
-      </section>
     </main>
 
     <script src="../shared/storage.js"></script>

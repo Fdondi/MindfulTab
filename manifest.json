@@ -24,6 +24,10 @@
   "chrome_url_overrides": {
     "newtab": "src/newtab/newtab.html"
   },
+  "options_ui": {
+    "page": "src/settings/settings.html",
+    "open_in_tab": true
+  },
   "browser_specific_settings": {
     "gecko": {
       "id": "mindfultab@fdondi.local",

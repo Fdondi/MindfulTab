@@ -31,10 +31,10 @@ function init() {
   const pill = document.getElementById("domain-pill");
   pill.textContent = `${domain} (karma ${score})`;
 
-  const button = document.getElementById("continue-btn");
-  button.addEventListener("click", () => {
+  const continueBtn = document.getElementById("continue-btn");
+  continueBtn.addEventListener("click", () => {
     continueAnyway().catch(() => {
-      button.textContent = "Try again";
+      continueBtn.textContent = "Try again";
     });
   });
 }
