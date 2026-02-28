@@ -1,5 +1,3 @@
-importScripts("./shared/storage.js", "./shared/karma.js");
-
 const TIMER_ALARM_NAME = "mindfultab-timer-expired";
 const GATE_BYPASS_WINDOW_MS = 5 * 60 * 1000;
 const lastUrlByTabId = {};
@@ -115,16 +113,18 @@ async function getCurrentActiveDomain() {
   }
 }
 
-async function startTimer({ durationMinutes, reason, tabUrl }) {
+async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
   const startedAt = Date.now();
   const durationMs = Math.max(1, Number(durationMinutes)) * 60 * 1000;
   const endsAt = startedAt + durationMs;
+  const ownerTabId = Number.isInteger(tabId) ? tabId : null;
   const session = {
     startedAt,
     endsAt,
     durationMinutes: Math.max(1, Number(durationMinutes)),
     reason: reason || "",
     tabUrl: tabUrl || "",
+    tabId: ownerTabId,
     domain: getDomainFromUrl(tabUrl),
     ended: false,
     nudgedAt: null,
@@ -216,6 +216,22 @@ EXT_API.tabs.onActivated.addListener(async (activeInfo) => {
   }
 });
 
+EXT_API.tabs.onRemoved.addListener(async (tabId) => {
+  delete lastUrlByTabId[tabId];
+
+  const session = await getActiveSession();
+  if (!session || session.ended) return;
+  if (session.tabId !== tabId) return;
+
+  await clearTimerAlarm();
+  await clearActiveSession();
+  await appendHistory({
+    type: "session_cancelled_tab_closed",
+    atIso: nowIso(),
+    session
+  });
+});
+
 EXT_API.runtime.onInstalled.addListener(async () => {
   const settings = await getSettings();
   await setStorageValues({ [STORAGE_KEYS.SETTINGS]: settings });
@@ -229,7 +245,8 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const session = await startTimer({
         durationMinutes: message.payload?.durationMinutes,
         reason: message.payload?.reason,
-        tabUrl
+        tabUrl,
+        tabId: sender?.tab?.id
       });
       sendResponse({ ok: true, session });
       return;
