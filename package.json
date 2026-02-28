@@ -1,0 +1,13 @@
+{
+  "name": "mindfultab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MindfulHome companion extension for Edge and Firefox.",
+  "scripts": {
+    "check:structure": "node -e \"const fs=require('fs');['manifest.json','src/background.js','src/newtab/newtab.html','src/gate/gate.html','src/search/embeddings.js','src/search/index.js'].forEach(p=>{if(!fs.existsSync(p)){throw new Error('Missing '+p)}});console.log('Structure OK')\"",
+    "build:zip": "powershell -NoProfile -Command \"if (Test-Path dist) { Remove-Item -Recurse -Force dist }; New-Item -ItemType Directory -Path dist | Out-Null; Compress-Archive -Path manifest.json,src -DestinationPath dist/mindfultab.zip -Force\""
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

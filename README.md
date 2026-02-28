@@ -8,6 +8,7 @@ This extension overrides the New Tab page with a phone-like timer screen, then a
 - domain karma scoring based on overrun behavior
 - graduated hiding of frequent-site shortcuts
 - reflection gate for low-karma domains that always allows "continue anyway"
+- post-start home view with favorites, URL bar, and intent suggestions
 
 ## Browser support
 
@@ -18,7 +19,7 @@ One codebase is used for both browsers.
 
 ## Compatibility notes
 
-- Uses standard WebExtensions APIs (`storage`, `tabs`, `alarms`, `notifications`, `runtime` messaging).
+- Uses standard WebExtensions APIs (`storage`, `tabs`, `alarms`, `notifications`, `runtime` messaging, `history`).
 - Uses `chrome_url_overrides.newtab` for New Tab replacement.
 - Includes `browser_specific_settings.gecko` for Firefox packaging identity.
 - Uses `browser`/`chrome` fallback (`const EXT_API = typeof browser !== "undefined" ? browser : chrome`) so the same scripts run on both browsers.
@@ -29,9 +30,11 @@ One codebase is used for both browsers.
 - `src/background.js`: timer lifecycle, alarms, domain tracking, karma updates, reflection-gate routing
 - `src/newtab/newtab.html`: New Tab UI
 - `src/newtab/newtab.css`: phone-like visual style
-- `src/newtab/newtab.js`: New Tab interactions, status rendering, shortcut hiding
+- `src/newtab/newtab.js`: wheel timer, timer/home state machine, URL bar, suggestions
 - `src/shared/storage.js`: storage helpers and keys
 - `src/shared/karma.js`: karma scoring helpers
+- `src/search/embeddings.js`: local lightweight embedding utilities
+- `src/search/index.js`: embedding index build/query and keyword fallback
 - `src/gate/gate.html`: reflection prompt page
 - `src/gate/gate.js`: continue-anyway flow
 
@@ -67,6 +70,21 @@ npm run build:zip
 ```
 
 Output: `dist/mindfultab.zip`
+
+## Search and history behavior
+
+- Timer picker is a scroll wheel from `1` to `120` minutes.
+- Pressing `Start` switches from timer screen to the home screen.
+- Home screen supports:
+  - favorites section
+  - URL input (direct navigation for URL-like values)
+  - intent query search over previously visited links
+- History source mode is user-selectable:
+  - browser history only
+  - extension-collected history only
+  - both (default)
+- Local embedding index is built from visited links and cached in extension storage.
+- Keyword fallback is used if embedding ranking is unavailable.
 
 ## Behavior notes
 

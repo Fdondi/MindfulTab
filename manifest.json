@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "MindfulTab",
+  "description": "A mindful browser companion with timer-first nudges.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage",
+    "tabs",
+    "alarms",
+    "notifications",
+    "history"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "chrome_url_overrides": {
+    "newtab": "src/newtab/newtab.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mindfultab@fdondi.local",
+      "strict_min_version": "121.0"
+    }
+  },
+  "action": {
+    "default_title": "MindfulTab"
+  }
+}

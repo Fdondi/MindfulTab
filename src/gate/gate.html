@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MindfulTab Reflection</title>
+    <style>
+      :root {
+        --bg: #f1eff4;
+        --text: #1d1d25;
+        --muted: #666677;
+        --btn: #58609f;
+        --btn-text: #ffffff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        display: grid;
+        place-items: center;
+        padding: 18px;
+      }
+
+      .panel {
+        width: min(660px, 100%);
+        background: #e9e7ef;
+        border-radius: 16px;
+        padding: 24px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 28px;
+      }
+
+      p {
+        margin: 0 0 14px;
+        color: var(--muted);
+      }
+
+      .pill {
+        display: inline-block;
+        margin-bottom: 16px;
+        background: #c9cbe9;
+        color: #1c235a;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-weight: 700;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 90px;
+        border: 1px solid #8c8ba0;
+        border-radius: 12px;
+        padding: 12px;
+        font: inherit;
+        resize: vertical;
+      }
+
+      .actions {
+        margin-top: 14px;
+        display: flex;
+        justify-content: flex-end;
+      }
+
+      button {
+        border: 0;
+        border-radius: 10px;
+        background: var(--btn);
+        color: var(--btn-text);
+        font-size: 16px;
+        font-weight: 700;
+        padding: 12px 16px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="panel">
+      <h1>Pause for a breath</h1>
+      <p>This domain has low karma right now. You can continue anyway after a quick reflection.</p>
+      <div id="domain-pill" class="pill"></div>
+      <textarea id="reflection-input" maxlength="240" placeholder="What are you trying to do right now? (optional)"></textarea>
+      <div class="actions">
+        <button id="continue-btn">Continue anyway</button>
+      </div>
+    </main>
+    <script src="./gate.js"></script>
+  </body>
+</html>
