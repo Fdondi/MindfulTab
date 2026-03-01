@@ -23,6 +23,7 @@ const state = {
 const ui = {
   timerView: document.getElementById("timer-view"),
   homeView: document.getElementById("home-view"),
+  lastSessionSummary: document.getElementById("last-session-summary"),
   wheel: document.getElementById("duration-wheel"),
   reasonInput: document.getElementById("reason-input"),
   startBtn: document.getElementById("start-btn"),
@@ -57,6 +58,35 @@ function formatDuration(msRemaining) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
   return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
+function formatTimeAgo(epochMs) {
+  if (!epochMs || Number.isNaN(epochMs)) return "just now";
+  const deltaMs = Math.max(0, Date.now() - epochMs);
+  const deltaMinutes = Math.floor(deltaMs / (60 * 1000));
+  if (deltaMinutes < 1) return "just now";
+  if (deltaMinutes < 60) return `${deltaMinutes}m ago`;
+  const hours = Math.floor(deltaMinutes / 60);
+  const minutes = deltaMinutes % 60;
+  if (hours < 24) return minutes ? `${hours}h ${minutes}m ago` : `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours ? `${days}d ${remHours}h ago` : `${days}d ago`;
+}
+
+function renderLastSessionSummary(previousSession) {
+  if (!ui.lastSessionSummary) return;
+  if (!previousSession?.ended || !previousSession?.startedAt || !previousSession?.durationMinutes) {
+    ui.lastSessionSummary.textContent = "";
+    ui.lastSessionSummary.classList.add("hidden");
+    return;
+  }
+
+  const declaredMinutes = Math.max(1, Number(previousSession.durationMinutes || 1));
+  const intent = (previousSession.reason || "").trim() || "No intent declared";
+  const declaredAgo = formatTimeAgo(Number(previousSession.startedAt));
+  ui.lastSessionSummary.textContent = `Previous plan: ${declaredMinutes} min, intent "${intent}", declared ${declaredAgo}.`;
+  ui.lastSessionSummary.classList.remove("hidden");
 }
 
 function setSelectedMinutes(minutes, shouldScroll) {
@@ -365,8 +395,10 @@ async function init() {
   buildWheel();
   bindEvents();
   setSelectedMinutes(1, true);
+  let previousSession = null;
   try {
-    await sendMessage("mindfultab/reset-session-newtab");
+    const resetResult = await sendMessage("mindfultab/reset-session-newtab");
+    previousSession = resetResult?.previousSession || null;
   } catch (_) {
     // If worker is still waking up, continue with local UI.
   }
@@ -377,6 +409,7 @@ async function init() {
   ui.urlInput.value = "";
   renderSuggestions([]);
   setView("timer");
+  renderLastSessionSummary(previousSession);
   startTicking();
 }
 

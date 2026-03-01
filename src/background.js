@@ -1,5 +1,7 @@
 const TIMER_ALARM_NAME = "mindfultab-timer-expired";
 const GATE_BYPASS_WINDOW_MS = 5 * 60 * 1000;
+const DEFAULT_BYPASS_TIMER_MINUTES = 5;
+const TIMER_SELECTION_PENDING_KEY = "timerSelectionPending";
 const lastUrlByTabId = {};
 const allowDomainUntilMs = {};
 
@@ -138,6 +140,40 @@ async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
   return session;
 }
 
+async function setTimerSelectionPending(value) {
+  await setStorageValues({ [TIMER_SELECTION_PENDING_KEY]: Boolean(value) });
+}
+
+async function getTimerSelectionPending() {
+  const values = await getStorageValues(TIMER_SELECTION_PENDING_KEY);
+  return Boolean(values[TIMER_SELECTION_PENDING_KEY]);
+}
+
+async function startBypassTimerIfNeeded(tabUrl) {
+  if (!shouldTrackUrl(tabUrl)) return null;
+  const [pending, currentSession] = await Promise.all([getTimerSelectionPending(), getActiveSession()]);
+  if (!pending) return null;
+
+  if (currentSession && !currentSession.ended) {
+    await setTimerSelectionPending(false);
+    return currentSession;
+  }
+
+  const session = await startTimer({
+    durationMinutes: DEFAULT_BYPASS_TIMER_MINUTES,
+    reason: "Auto-started after bypassing timer selection",
+    tabUrl
+  });
+  await setTimerSelectionPending(false);
+  await appendHistory({
+    type: "session_auto_started_bypass",
+    atIso: nowIso(),
+    triggerUrl: tabUrl,
+    session
+  });
+  return session;
+}
+
 async function finishTimerIfNeeded() {
   const session = await getActiveSession();
   if (!session || session.ended) return null;
@@ -168,9 +204,12 @@ async function finishTimerIfNeeded() {
 }
 
 async function resetSessionForNewTab() {
+  const previousSession = await getActiveSession();
   await clearTimerAlarm();
   await clearActiveSession();
+  await setTimerSelectionPending(true);
   await appendHistory({ type: "session_reset_new_tab", atIso: nowIso() });
+  return previousSession;
 }
 
 EXT_API.alarms.onAlarm.addListener(async (alarm) => {
@@ -181,6 +220,7 @@ EXT_API.alarms.onAlarm.addListener(async (alarm) => {
 EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   const url = tab?.url || "";
+  await startBypassTimerIfNeeded(url);
   await recordDomainVisit(url, tabId);
   if (shouldTrackUrl(url)) {
     await upsertVisitedLink({
@@ -250,6 +290,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message?.type === "mindfultab/start-timer") {
       const tabUrl = message.payload?.tabUrl || sender?.tab?.url || "";
+      await setTimerSelectionPending(false);
       const session = await startTimer({
         durationMinutes: message.payload?.durationMinutes,
         reason: message.payload?.reason,
@@ -273,8 +314,8 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "mindfultab/reset-session-newtab") {
-      await resetSessionForNewTab();
-      sendResponse({ ok: true });
+      const previousSession = await resetSessionForNewTab();
+      sendResponse({ ok: true, previousSession });
       return;
     }
 
