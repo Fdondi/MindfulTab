@@ -31,13 +31,19 @@ body {
 }
 
 .card {
-  width: min(760px, 100%);
+  width: min(1100px, 100%);
   background: transparent;
   border-radius: 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  padding-top: 8px;
+}
+
+.timer-controls {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 8px;
 }
 
 .title {
@@ -315,6 +321,10 @@ body {
 }
 
 @media (max-width: 900px) {
+  .card {
+    grid-template-columns: 1fr;
+  }
+
   .title {
     margin-bottom: 56px;
     font-size: clamp(30px, 6vw, 40px);

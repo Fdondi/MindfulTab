@@ -1,0 +1,446 @@
+/* ── Fidget area layout ── */
+
+.fidget-area {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  border-left: 1px solid var(--accent-soft);
+}
+
+.fidget-area::before {
+  content: "or";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 8px 0;
+}
+
+/* ── Perspective wrapper ── */
+
+.fidget-cube-wrapper {
+  perspective: 800px;
+  width: 200px;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Cube ── */
+
+.fidget-cube {
+  width: 140px;
+  height: 140px;
+  position: relative;
+  transform-style: preserve-3d;
+  cursor: grab;
+}
+
+.fidget-cube.dragging {
+  cursor: grabbing;
+}
+
+/* ── Faces ── */
+
+.fidget-face {
+  position: absolute;
+  width: 140px;
+  height: 140px;
+  border: 2px solid #8b6914;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backface-visibility: visible;
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.fidget-face--front {
+  background: linear-gradient(145deg, #d4884a, #b87333 45%, #a0622b);
+  transform: translateZ(70px);
+}
+
+.fidget-face--back {
+  background: linear-gradient(145deg, #c07840, #a0522d 45%, #8b4726);
+  transform: rotateY(180deg) translateZ(70px);
+}
+
+.fidget-face--right {
+  background: linear-gradient(145deg, #d4bc4a, #c9b037 45%, #b8a020);
+  transform: rotateY(90deg) translateZ(70px);
+}
+
+.fidget-face--left {
+  background: linear-gradient(145deg, #c9b037, #b8960c 45%, #a88600);
+  transform: rotateY(-90deg) translateZ(70px);
+}
+
+.fidget-face--top {
+  background: linear-gradient(145deg, #daa520, #cd7f32 45%, #c9b037);
+  transform: rotateX(90deg) translateZ(70px);
+}
+
+.fidget-face--bottom {
+  background: linear-gradient(145deg, #a0522d, #8b6914 45%, #7a5c12);
+  transform: rotateX(-90deg) translateZ(70px);
+}
+
+/* ── Rivets ── */
+
+.fidget-rivet {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #e8d28a, #8b6914 70%, #5c4510);
+  box-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.4),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+  z-index: 2;
+}
+
+.fidget-rivet--tl { top: 6px; left: 6px; }
+.fidget-rivet--tr { top: 6px; right: 6px; }
+.fidget-rivet--bl { bottom: 6px; left: 6px; }
+.fidget-rivet--br { bottom: 6px; right: 6px; }
+
+/* ═══════════════════════════════════════
+   WIDGET: Buttons (front face)
+   5 brass push-buttons in a + pattern
+   ═══════════════════════════════════════ */
+
+.widget-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, 30px);
+  grid-template-rows: repeat(3, 30px);
+  gap: 4px;
+  place-items: center;
+}
+
+.fidget-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid #5c4510;
+  padding: 0;
+  background: linear-gradient(145deg, #d4bc4a, #a88600);
+  box-shadow:
+    0 3px 0 #5c4510,
+    0 4px 6px rgba(0, 0, 0, 0.3),
+    inset 0 1px 2px rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.fidget-btn.pressed {
+  background: linear-gradient(145deg, #7a5c12, #5c4510);
+  box-shadow:
+    0 1px 0 #3a2f2b,
+    inset 0 2px 4px rgba(0, 0, 0, 0.5);
+  transform: translateY(2px);
+  transition: all 0.06s ease-in;
+}
+
+.fidget-btn:nth-child(1) { grid-column: 2; grid-row: 1; }
+.fidget-btn:nth-child(2) { grid-column: 1; grid-row: 2; }
+.fidget-btn:nth-child(3) { grid-column: 2; grid-row: 2; }
+.fidget-btn:nth-child(4) { grid-column: 3; grid-row: 2; }
+.fidget-btn:nth-child(5) { grid-column: 2; grid-row: 3; }
+
+/* ═══════════════════════════════════════
+   WIDGET: Switch (right face)
+   Toggle lever in a brass track
+   ═══════════════════════════════════════ */
+
+.widget-switch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  cursor: pointer;
+}
+
+.switch-track {
+  width: 34px;
+  height: 68px;
+  background: #2a2018;
+  border-radius: 17px;
+  position: relative;
+  border: 2px solid #5c4510;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.switch-light {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #3a2f2b;
+  transition: background 0.25s, box-shadow 0.25s;
+}
+
+.widget-switch.on .switch-light {
+  background: #4a7c6f;
+  box-shadow: 0 0 8px 2px rgba(74, 124, 111, 0.6);
+}
+
+.switch-lever {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #d4bc4a, #8b6914);
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.4),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.widget-switch.on .switch-lever {
+  transform: translateY(-36px);
+}
+
+/* ═══════════════════════════════════════
+   WIDGET: Spinner (back face)
+   Gear SVG with momentum spin
+   ═══════════════════════════════════════ */
+
+.spinner-gear {
+  width: 80px;
+  height: 80px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+  transition: transform 1.5s cubic-bezier(0.1, 0.7, 0.3, 1);
+}
+
+.gear-body {
+  fill: #3a2f2b;
+  stroke: #5c4510;
+  stroke-width: 1.2;
+}
+
+.gear-center {
+  fill: #6b5b2e;
+  stroke: #8b6914;
+  stroke-width: 1;
+}
+
+.gear-arrow {
+  fill: #c9b037;
+  stroke: #e8d28a;
+  stroke-width: 0.6;
+}
+
+/* ═══════════════════════════════════════
+   WIDGET: Roller (left face)
+   3 ball bearings in grooves
+   ═══════════════════════════════════════ */
+
+.widget-roller {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.roller-groove {
+  width: 90px;
+  height: 20px;
+  background: #2a2018;
+  border-radius: 10px;
+  position: relative;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+  border: 1px solid #3a2f2b;
+}
+
+.roller-ball {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #e8d28a, #8b6914 70%, #5c4510);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.4),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
+  position: absolute;
+  top: 0;
+  left: 1px;
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.roller-ball.right {
+  transform: translateX(70px);
+}
+
+/* ═══════════════════════════════════════
+   WIDGET: Dial (top face)
+   Rotary knob with 4 detent positions
+   ═══════════════════════════════════════ */
+
+.widget-dial {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  cursor: pointer;
+}
+
+.dial-base {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: #2a2018;
+  border: 2px solid #5c4510;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.4);
+  position: absolute;
+  inset: 0;
+}
+
+.dial-notch {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #5c4510;
+}
+
+.dial-notch--n { top: 5px;    left: 50%; transform: translateX(-50%); }
+.dial-notch--e { right: 5px;  top: 50%;  transform: translateY(-50%); }
+.dial-notch--s { bottom: 5px; left: 50%; transform: translateX(-50%); }
+.dial-notch--w { left: 5px;   top: 50%;  transform: translateY(-50%); }
+
+.dial-knob {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #d4bc4a, #8b6914 80%);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: -27px 0 0 -27px;
+  border: 2px solid #5c4510;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.3),
+    inset 0 1px 2px rgba(255, 255, 255, 0.3);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.dial-indicator {
+  width: 4px;
+  height: 16px;
+  background: #3a2f2b;
+  border-radius: 2px;
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* ═══════════════════════════════════════
+   WIDGET: Worry Pad (bottom face)
+   Smooth brass pad with ripple on press
+   ═══════════════════════════════════════ */
+
+.widget-pad {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 45% 40%, #cd7f32, #8b6914 70%, #6b5b2e);
+  box-shadow:
+    inset 0 6px 16px rgba(0, 0, 0, 0.35),
+    inset 0 -2px 8px rgba(255, 255, 255, 0.08);
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.pad-ripple {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid rgba(201, 176, 55, 0.45);
+  pointer-events: none;
+  animation: pad-ripple 0.9s ease-out forwards;
+}
+
+@keyframes pad-ripple {
+  0%   { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(3.5); opacity: 0; }
+}
+
+/* ── Hint & click counter ── */
+
+.fidget-hint {
+  margin: 16px 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.fidget-clicks {
+  margin: 0;
+  font-size: 13px;
+  color: #8b6914;
+  font-weight: 600;
+  text-align: center;
+  min-height: 18px;
+}
+
+/* ── Fireworks canvas ── */
+
+.fireworks-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ── Steam puff ── */
+
+.steam-puff {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(200, 180, 140, 0.6), transparent);
+  pointer-events: none;
+  z-index: 20;
+  animation: steam-puff 0.6s ease-out forwards;
+}
+
+@keyframes steam-puff {
+  0%   { transform: scale(0.3); opacity: 0.8; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 900px) {
+  .fidget-area {
+    border-left: none;
+    border-top: 1px solid var(--accent-soft);
+    padding-top: 28px;
+    margin-top: 8px;
+  }
+
+  .fidget-area::before {
+    left: 50%;
+    top: 0;
+    transform: translate(-50%, -50%);
+    padding: 0 12px;
+  }
+}

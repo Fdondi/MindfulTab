@@ -395,6 +395,7 @@ async function init() {
   buildWheel();
   bindEvents();
   setSelectedMinutes(1, true);
+  if (typeof initFidgetCube === "function") initFidgetCube();
   let previousSession = null;
   try {
     const resetResult = await sendMessage("mindfultab/reset-session-newtab");
