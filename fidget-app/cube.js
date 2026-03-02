@@ -717,32 +717,59 @@
 
   /* ── Persistence ── */
 
-  function storageAPI() {
-    return (typeof browser !== "undefined" ? browser : chrome).storage.local;
+  function extensionStorageAPI() {
+    try {
+      var ext = (typeof browser !== "undefined" ? browser : chrome);
+      if (ext && ext.storage && ext.storage.local &&
+          typeof ext.storage.local.get === "function" &&
+          typeof ext.storage.local.set === "function") {
+        return ext.storage.local;
+      }
+    } catch (_) { /* fallback below */ }
+    return null;
   }
 
   function loadState() {
     return new Promise(function (resolve) {
+      var extStore = extensionStorageAPI();
       try {
-        storageAPI().get(STORAGE_KEY, function (result) {
-          if (result && result[STORAGE_KEY]) {
-            var s = result[STORAGE_KEY];
-            if (Array.isArray(s.buttons) && s.buttons.length === 5) wState.buttons = s.buttons.slice();
-            if (typeof s.switchOn === "boolean") wState.switchOn = s.switchOn;
-            if (typeof s.spinAngle === "number") wState.spinAngle = s.spinAngle;
-            if (Array.isArray(s.rollers) && s.rollers.length === 3) wState.rollers = s.rollers.slice();
-            if (typeof s.dialAngle === "number") wState.dialAngle = s.dialAngle;
-            if (typeof s.clicks === "number") wState.clicks = s.clicks;
-          }
-          resolve();
-        });
+        if (extStore) {
+          extStore.get(STORAGE_KEY, function (result) {
+            if (result && result[STORAGE_KEY]) {
+              var s = result[STORAGE_KEY];
+              if (Array.isArray(s.buttons) && s.buttons.length === 5) wState.buttons = s.buttons.slice();
+              if (typeof s.switchOn === "boolean") wState.switchOn = s.switchOn;
+              if (typeof s.spinAngle === "number") wState.spinAngle = s.spinAngle;
+              if (Array.isArray(s.rollers) && s.rollers.length === 3) wState.rollers = s.rollers.slice();
+              if (typeof s.dialAngle === "number") wState.dialAngle = s.dialAngle;
+              if (typeof s.clicks === "number") wState.clicks = s.clicks;
+            }
+            resolve();
+          });
+          return;
+        }
+      } catch (_) { /* fallback to localStorage */ }
+
+      try {
+        var raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          var ls = JSON.parse(raw);
+          if (Array.isArray(ls.buttons) && ls.buttons.length === 5) wState.buttons = ls.buttons.slice();
+          if (typeof ls.switchOn === "boolean") wState.switchOn = ls.switchOn;
+          if (typeof ls.spinAngle === "number") wState.spinAngle = ls.spinAngle;
+          if (Array.isArray(ls.rollers) && ls.rollers.length === 3) wState.rollers = ls.rollers.slice();
+          if (typeof ls.dialAngle === "number") wState.dialAngle = ls.dialAngle;
+          if (typeof ls.clicks === "number") wState.clicks = ls.clicks;
+        }
       } catch (_) {
-        resolve();
+        /* ignore parse/storage errors */
       }
+      resolve();
     });
   }
 
   function saveState() {
+    var extStore = extensionStorageAPI();
     try {
       var data = {};
       data[STORAGE_KEY] = {
@@ -753,7 +780,11 @@
         dialAngle: wState.dialAngle,
         clicks: wState.clicks
       };
-      storageAPI().set(data);
+      if (extStore) {
+        extStore.set(data);
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data[STORAGE_KEY]));
     } catch (_) { /* best-effort */ }
   }
 
