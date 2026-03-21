@@ -150,14 +150,20 @@ function renderStatus() {
     return;
   }
 
-  if (state.activeSession.ended) {
-    ui.statusText.textContent = "Timer ended. Check in before continuing.";
-    ui.homeTimerStatus.textContent = "Timer ended";
-    return;
-  }
-
   const msRemaining = state.activeSession.endsAt - Date.now();
-  if (msRemaining <= 0) {
+  const isExpired = state.activeSession.ended || msRemaining <= 0;
+
+  if (isExpired) {
+    if (state.view === "home") {
+      const declaredMinutes = Math.max(1, Number(state.activeSession.durationMinutes || 1));
+      const intent = (state.activeSession.reason || "").trim() || "No intent declared";
+      if (ui.lastSessionSummary) {
+        ui.lastSessionSummary.textContent = `Time's up. Your ${declaredMinutes}-min timer for "${intent}" just ended. What's next?`;
+        ui.lastSessionSummary.classList.remove("hidden");
+        ui.lastSessionSummary.classList.add("warning");
+      }
+      setView("timer");
+    }
     ui.statusText.textContent = "Timer ended. Check in before continuing.";
     ui.homeTimerStatus.textContent = "Timer ended";
     return;
