@@ -76,9 +76,29 @@ function formatTimeAgo(epochMs) {
 
 function renderLastSessionSummary(previousSession) {
   if (!ui.lastSessionSummary) return;
-  if (!previousSession?.ended || !previousSession?.startedAt || !previousSession?.durationMinutes) {
+  if (!previousSession?.startedAt) {
     ui.lastSessionSummary.textContent = "";
     ui.lastSessionSummary.classList.add("hidden");
+    ui.lastSessionSummary.classList.remove("warning");
+    return;
+  }
+
+  const wasBypassed = (previousSession.reason || "").includes("bypassing timer selection");
+
+  if (wasBypassed) {
+    ui.lastSessionSummary.textContent = "You skipped setting a timer last time. Take a moment — what are you actually here to do?";
+    ui.lastSessionSummary.classList.remove("hidden");
+    ui.lastSessionSummary.classList.add("warning");
+    return;
+  }
+
+  if (previousSession.ended) {
+    const declaredMinutes = Math.max(1, Number(previousSession.durationMinutes || 1));
+    const intent = (previousSession.reason || "").trim() || "No intent declared";
+    const declaredAgo = formatTimeAgo(Number(previousSession.startedAt));
+    ui.lastSessionSummary.textContent = `Your timer ran out. Previous plan: ${declaredMinutes} min — "${intent}", started ${declaredAgo}.`;
+    ui.lastSessionSummary.classList.remove("hidden");
+    ui.lastSessionSummary.classList.add("warning");
     return;
   }
 
@@ -86,7 +106,7 @@ function renderLastSessionSummary(previousSession) {
   const intent = (previousSession.reason || "").trim() || "No intent declared";
   const declaredAgo = formatTimeAgo(Number(previousSession.startedAt));
   ui.lastSessionSummary.textContent = `Previous plan: ${declaredMinutes} min, intent "${intent}", declared ${declaredAgo}.`;
-  ui.lastSessionSummary.classList.remove("hidden");
+  ui.lastSessionSummary.classList.remove("hidden", "warning");
 }
 
 function setSelectedMinutes(minutes, shouldScroll) {
