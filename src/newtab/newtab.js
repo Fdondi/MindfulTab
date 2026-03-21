@@ -414,7 +414,7 @@ function bindEvents() {
 function startTicking() {
   window.setInterval(() => {
     renderStatus();
-  }, 1000);
+  }, 10000);
 }
 
 async function init() {

@@ -221,6 +221,15 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   const url = tab?.url || "";
   await startBypassTimerIfNeeded(url);
+
+  if (shouldTrackUrl(url)) {
+    const session = await getActiveSession();
+    if (session?.ended) {
+      await EXT_API.tabs.update(tabId, { url: EXT_API.runtime.getURL("src/newtab/newtab.html") });
+      return;
+    }
+  }
+
   await recordDomainVisit(url, tabId);
   if (shouldTrackUrl(url)) {
     await upsertVisitedLink({
