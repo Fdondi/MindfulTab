@@ -4,6 +4,7 @@ self.EXT_API = EXT_API;
 const STORAGE_KEYS = {
   SETTINGS: "settings",
   ACTIVE_SESSION: "activeSession",
+  SESSIONS_BY_TAB: "sessionsByTab",
   KARMA_BY_DOMAIN: "karmaByDomain",
   OPT_OUT_DOMAINS: "optOutDomains",
   DOMAIN_VISITS: "domainVisits",
@@ -47,6 +48,28 @@ async function setActiveSession(session) {
 
 async function clearActiveSession() {
   return EXT_API.storage.local.remove(STORAGE_KEYS.ACTIVE_SESSION);
+}
+
+async function getSessionsByTab() {
+  const result = await getStorageValues(STORAGE_KEYS.SESSIONS_BY_TAB);
+  return result[STORAGE_KEYS.SESSIONS_BY_TAB] || {};
+}
+
+async function getTabSession(tabId) {
+  const sessions = await getSessionsByTab();
+  return sessions[String(tabId)] || null;
+}
+
+async function setTabSession(tabId, session) {
+  const sessions = await getSessionsByTab();
+  sessions[String(tabId)] = session;
+  return setStorageValues({ [STORAGE_KEYS.SESSIONS_BY_TAB]: sessions });
+}
+
+async function clearTabSession(tabId) {
+  const sessions = await getSessionsByTab();
+  delete sessions[String(tabId)];
+  return setStorageValues({ [STORAGE_KEYS.SESSIONS_BY_TAB]: sessions });
 }
 
 async function getKarmaByDomain() {
@@ -146,6 +169,10 @@ self.getSettings = getSettings;
 self.getActiveSession = getActiveSession;
 self.setActiveSession = setActiveSession;
 self.clearActiveSession = clearActiveSession;
+self.getSessionsByTab = getSessionsByTab;
+self.getTabSession = getTabSession;
+self.setTabSession = setTabSession;
+self.clearTabSession = clearTabSession;
 self.getKarmaByDomain = getKarmaByDomain;
 self.setKarmaByDomain = setKarmaByDomain;
 self.getOptOutDomains = getOptOutDomains;

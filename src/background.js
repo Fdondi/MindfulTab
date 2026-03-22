@@ -2,24 +2,41 @@ if (typeof importScripts === "function") {
   importScripts("shared/storage.js", "shared/karma.js");
 }
 
-const TIMER_ALARM_NAME = "mindfultab-timer-expired";
+const BADGE_ALARM_NAME = "mindfultab-badge-tick";
 const GATE_BYPASS_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_BYPASS_TIMER_MINUTES = 5;
-const TIMER_SELECTION_PENDING_KEY = "timerSelectionPending";
 const lastUrlByTabId = {};
 const allowDomainUntilMs = {};
+const timerPendingTabs = new Set(); // tabIds that opened newtab but haven't started a timer yet
 
-const BADGE_ALARM_NAME = "mindfultab-badge-tick";
+function timerAlarmName(tabId) {
+  return `mindfultab-timer-${tabId}`;
+}
 
 function nowIso() {
   return new Date().toISOString();
 }
 
-async function updateBadge() {
-  const session = await getActiveSession();
-  if (!session || session.ended) {
-    EXT_API.action.setBadgeText({ text: session?.ended ? "!" : "" });
-    EXT_API.action.setBadgeBackgroundColor({ color: session?.ended ? "#c0392b" : "#58609f" });
+async function updateBadge(tabId) {
+  let effectiveTabId = tabId;
+  if (effectiveTabId == null) {
+    try {
+      const tabs = await EXT_API.tabs.query({ active: true, lastFocusedWindow: true });
+      effectiveTabId = tabs?.[0]?.id;
+    } catch (_) {}
+  }
+  if (effectiveTabId == null) {
+    EXT_API.action.setBadgeText({ text: "" });
+    return;
+  }
+  const session = await getTabSession(effectiveTabId);
+  if (!session) {
+    EXT_API.action.setBadgeText({ text: "" });
+    return;
+  }
+  if (session.ended) {
+    EXT_API.action.setBadgeText({ text: "!" });
+    EXT_API.action.setBadgeBackgroundColor({ color: "#c0392b" });
     return;
   }
   const msRemaining = session.endsAt - Date.now();
@@ -37,24 +54,34 @@ async function updateBadge() {
 }
 
 function startBadgeTick() {
-  EXT_API.alarms.create(BADGE_ALARM_NAME, { periodInMinutes: 0.5 });
+  EXT_API.alarms.get(BADGE_ALARM_NAME).then(existing => {
+    if (!existing) {
+      EXT_API.alarms.create(BADGE_ALARM_NAME, { periodInMinutes: 0.5 });
+    }
+  }).catch(() => {
+    EXT_API.alarms.create(BADGE_ALARM_NAME, { periodInMinutes: 0.5 });
+  });
   updateBadge();
 }
 
-function stopBadgeTick() {
-  EXT_API.alarms.clear(BADGE_ALARM_NAME);
-  EXT_API.action.setBadgeText({ text: "" });
+async function stopBadgeTickIfIdle() {
+  const sessions = await getSessionsByTab();
+  const hasActive = Object.values(sessions).some(s => s && !s.ended);
+  if (!hasActive) {
+    EXT_API.alarms.clear(BADGE_ALARM_NAME);
+    EXT_API.action.setBadgeText({ text: "" });
+  } else {
+    await updateBadge();
+  }
 }
 
-async function clearTimerAlarm() {
-  await EXT_API.alarms.clear(TIMER_ALARM_NAME);
+async function clearTimerAlarm(tabId) {
+  await EXT_API.alarms.clear(timerAlarmName(tabId));
 }
 
-async function scheduleTimerAlarm(endEpochMs) {
-  await clearTimerAlarm();
-  EXT_API.alarms.create(TIMER_ALARM_NAME, {
-    when: endEpochMs
-  });
+async function scheduleTimerAlarm(tabId, endEpochMs) {
+  await clearTimerAlarm(tabId);
+  EXT_API.alarms.create(timerAlarmName(tabId), { when: endEpochMs });
 }
 
 function getDomainFromUrl(rawUrl) {
@@ -142,16 +169,6 @@ async function getVisitedLinksByMode(mode) {
   return all;
 }
 
-async function getCurrentActiveDomain() {
-  try {
-    const tabs = await EXT_API.tabs.query({ active: true, lastFocusedWindow: true });
-    const url = tabs?.[0]?.url || "";
-    return getDomainFromUrl(url);
-  } catch (_) {
-    return "";
-  }
-}
-
 async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
   const startedAt = Date.now();
   const durationMs = Math.max(1, Number(durationMinutes)) * 60 * 1000;
@@ -170,39 +187,31 @@ async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
     createdAtIso: nowIso()
   };
 
-  await setActiveSession(session);
-  await scheduleTimerAlarm(endsAt);
+  await setTabSession(ownerTabId, session);
+  await scheduleTimerAlarm(ownerTabId, endsAt);
   startBadgeTick();
   await appendHistory({ type: "session_started", atIso: nowIso(), session });
 
   return session;
 }
 
-async function setTimerSelectionPending(value) {
-  await setStorageValues({ [TIMER_SELECTION_PENDING_KEY]: Boolean(value) });
-}
-
-async function getTimerSelectionPending() {
-  const values = await getStorageValues(TIMER_SELECTION_PENDING_KEY);
-  return Boolean(values[TIMER_SELECTION_PENDING_KEY]);
-}
-
-async function startBypassTimerIfNeeded(tabUrl) {
+async function startBypassTimerIfNeeded(tabUrl, tabId) {
   if (!shouldTrackUrl(tabUrl)) return null;
-  const [pending, currentSession] = await Promise.all([getTimerSelectionPending(), getActiveSession()]);
-  if (!pending) return null;
+  if (!timerPendingTabs.has(tabId)) return null;
 
+  const currentSession = await getTabSession(tabId);
   if (currentSession && !currentSession.ended) {
-    await setTimerSelectionPending(false);
+    timerPendingTabs.delete(tabId);
     return currentSession;
   }
 
   const session = await startTimer({
     durationMinutes: DEFAULT_BYPASS_TIMER_MINUTES,
     reason: "Auto-started after bypassing timer selection",
-    tabUrl
+    tabUrl,
+    tabId
   });
-  await setTimerSelectionPending(false);
+  timerPendingTabs.delete(tabId);
   await appendHistory({
     type: "session_auto_started_bypass",
     atIso: nowIso(),
@@ -212,18 +221,17 @@ async function startBypassTimerIfNeeded(tabUrl) {
   return session;
 }
 
-async function finishTimerIfNeeded() {
-  const session = await getActiveSession();
+async function finishTimerIfNeeded(tabId) {
+  const session = await getTabSession(tabId);
   if (!session || session.ended) return null;
   if (Date.now() < session.endsAt) return session;
 
-  const activeDomain = await getCurrentActiveDomain();
-  const targetDomain = activeDomain || session.domain;
-  const endedSession = { ...session, domain: targetDomain, ended: true, nudgedAt: Date.now() };
-  await setActiveSession(endedSession);
+  const endedSession = { ...session, ended: true, nudgedAt: Date.now() };
+  await setTabSession(tabId, endedSession);
+  const domain = session.domain;
   const optOutDomains = await getOptOutDomains();
-  if (!optOutDomains[targetDomain]) {
-    await applyOverrunPenalty(targetDomain, 1);
+  if (domain && !optOutDomains[domain]) {
+    await applyOverrunPenalty(domain, 1);
   }
   await appendHistory({ type: "session_ended", atIso: nowIso(), session: endedSession });
 
@@ -232,20 +240,20 @@ async function finishTimerIfNeeded() {
     iconUrl: EXT_API.runtime.getURL("src/newtab/icon.svg"),
     title: "MindfulTab",
     message: "Timer ended. Pause and decide your next step."
-  }).catch(() => {
-    // Notifications can fail (e.g. SVG not supported as icon in Chrome).
-  });
+  }).catch(() => {});
 
   return endedSession;
 }
 
-async function resetSessionForNewTab() {
-  const previousSession = await getActiveSession();
-  await clearTimerAlarm();
-  await clearActiveSession();
-  stopBadgeTick();
-  await setTimerSelectionPending(true);
+async function resetSessionForNewTab(tabId) {
+  const previousSession = await getTabSession(tabId);
+  if (tabId != null) {
+    await clearTimerAlarm(tabId);
+    await clearTabSession(tabId);
+  }
+  timerPendingTabs.add(tabId);
   await appendHistory({ type: "session_reset_new_tab", atIso: nowIso() });
+  await stopBadgeTickIfIdle();
   return previousSession;
 }
 
@@ -254,18 +262,22 @@ EXT_API.alarms.onAlarm.addListener(async (alarm) => {
     await updateBadge();
     return;
   }
-  if (alarm.name !== TIMER_ALARM_NAME) return;
-  await finishTimerIfNeeded();
-  await updateBadge();
+  if (alarm.name.startsWith("mindfultab-timer-")) {
+    const tabId = Number(alarm.name.replace("mindfultab-timer-", ""));
+    if (!Number.isNaN(tabId)) {
+      await finishTimerIfNeeded(tabId);
+      await updateBadge(tabId);
+    }
+  }
 });
 
 EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   const url = tab?.url || "";
-  await startBypassTimerIfNeeded(url);
+  await startBypassTimerIfNeeded(url, tabId);
 
   if (shouldTrackUrl(url)) {
-    const session = await getActiveSession();
+    const session = await getTabSession(tabId);
     if (session?.ended) {
       try {
         await EXT_API.tabs.update(tabId, { url: EXT_API.runtime.getURL("src/newtab/newtab.html") });
@@ -314,6 +326,7 @@ EXT_API.tabs.onActivated.addListener(async (activeInfo) => {
   try {
     const tab = await EXT_API.tabs.get(activeInfo.tabId);
     await recordDomainVisit(tab?.url || "", activeInfo.tabId);
+    await updateBadge(activeInfo.tabId);
   } catch (_) {
     // Ignore race conditions around tab lifecycle.
   }
@@ -321,18 +334,19 @@ EXT_API.tabs.onActivated.addListener(async (activeInfo) => {
 
 EXT_API.tabs.onRemoved.addListener(async (tabId) => {
   delete lastUrlByTabId[tabId];
+  timerPendingTabs.delete(tabId);
 
-  const session = await getActiveSession();
+  const session = await getTabSession(tabId);
   if (!session || session.ended) return;
-  if (session.tabId !== tabId) return;
 
-  await clearTimerAlarm();
-  await clearActiveSession();
+  await clearTimerAlarm(tabId);
+  await clearTabSession(tabId);
   await appendHistory({
     type: "session_cancelled_tab_closed",
     atIso: nowIso(),
     session
   });
+  await stopBadgeTickIfIdle();
 });
 
 EXT_API.runtime.onInstalled.addListener(async () => {
@@ -343,15 +357,17 @@ EXT_API.runtime.onInstalled.addListener(async () => {
 
 EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
+    const senderTabId = sender?.tab?.id;
+
     if (message?.type === "mindfultab/start-timer") {
       try {
         const tabUrl = message.payload?.tabUrl || sender?.tab?.url || "";
-        await setTimerSelectionPending(false);
+        timerPendingTabs.delete(senderTabId);
         const session = await startTimer({
           durationMinutes: message.payload?.durationMinutes,
           reason: message.payload?.reason,
           tabUrl,
-          tabId: sender?.tab?.id
+          tabId: senderTabId
         });
         sendResponse({ ok: true, session });
       } catch (err) {
@@ -361,9 +377,9 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "mindfultab/get-state") {
-      await finishTimerIfNeeded();
-      const [session, karmaByDomain, domainVisits, settings] = await Promise.all([
-        getActiveSession(),
+      if (senderTabId != null) await finishTimerIfNeeded(senderTabId);
+      const session = senderTabId != null ? await getTabSession(senderTabId) : null;
+      const [karmaByDomain, domainVisits, settings] = await Promise.all([
         getKarmaByDomain(),
         getDomainVisits(),
         getSettings()
@@ -373,7 +389,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "mindfultab/reset-session-newtab") {
-      const previousSession = await resetSessionForNewTab();
+      const previousSession = await resetSessionForNewTab(senderTabId);
       sendResponse({ ok: true, previousSession });
       return;
     }
@@ -381,10 +397,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "mindfultab/set-history-mode") {
       const mode = message.payload?.mode || "both_with_toggle";
       const settings = await getSettings();
-      const next = {
-        ...settings,
-        historyMode: mode
-      };
+      const next = { ...settings, historyMode: mode };
       await setStorageValues({ [STORAGE_KEYS.SETTINGS]: next });
       sendResponse({ ok: true, settings: next });
       return;
@@ -441,11 +454,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       const score = await applyRecovery(domain, 1);
-      await appendHistory({
-        type: "karma_forgiven",
-        atIso: nowIso(),
-        domain
-      });
+      await appendHistory({ type: "karma_forgiven", atIso: nowIso(), domain });
       sendResponse({ ok: true, domain, score });
       return;
     }
