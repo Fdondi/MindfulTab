@@ -1,3 +1,7 @@
+if (typeof importScripts === "function") {
+  importScripts("shared/storage.js", "shared/karma.js");
+}
+
 const TIMER_ALARM_NAME = "mindfultab-timer-expired";
 const GATE_BYPASS_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_BYPASS_TIMER_MINUTES = 5;
@@ -5,8 +9,41 @@ const TIMER_SELECTION_PENDING_KEY = "timerSelectionPending";
 const lastUrlByTabId = {};
 const allowDomainUntilMs = {};
 
+const BADGE_ALARM_NAME = "mindfultab-badge-tick";
+
 function nowIso() {
   return new Date().toISOString();
+}
+
+async function updateBadge() {
+  const session = await getActiveSession();
+  if (!session || session.ended) {
+    EXT_API.action.setBadgeText({ text: session?.ended ? "!" : "" });
+    EXT_API.action.setBadgeBackgroundColor({ color: session?.ended ? "#c0392b" : "#58609f" });
+    return;
+  }
+  const msRemaining = session.endsAt - Date.now();
+  if (msRemaining <= 0) {
+    EXT_API.action.setBadgeText({ text: "!" });
+    EXT_API.action.setBadgeBackgroundColor({ color: "#c0392b" });
+    return;
+  }
+  const totalSeconds = Math.ceil(msRemaining / 1000);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  const text = mins > 0 ? `${mins}m` : `${secs}s`;
+  EXT_API.action.setBadgeText({ text });
+  EXT_API.action.setBadgeBackgroundColor({ color: "#58609f" });
+}
+
+function startBadgeTick() {
+  EXT_API.alarms.create(BADGE_ALARM_NAME, { periodInMinutes: 0.5 });
+  updateBadge();
+}
+
+function stopBadgeTick() {
+  EXT_API.alarms.clear(BADGE_ALARM_NAME);
+  EXT_API.action.setBadgeText({ text: "" });
 }
 
 async function clearTimerAlarm() {
@@ -135,6 +172,7 @@ async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
 
   await setActiveSession(session);
   await scheduleTimerAlarm(endsAt);
+  startBadgeTick();
   await appendHistory({ type: "session_started", atIso: nowIso(), session });
 
   return session;
@@ -189,16 +227,14 @@ async function finishTimerIfNeeded() {
   }
   await appendHistory({ type: "session_ended", atIso: nowIso(), session: endedSession });
 
-  try {
-    EXT_API.notifications.create({
-      type: "basic",
-      iconUrl: EXT_API.runtime.getURL("src/newtab/icon.svg"),
-      title: "MindfulTab",
-      message: "Timer ended. Pause and decide your next step."
-    });
-  } catch (_) {
-    // Notifications can fail if browser has no icon configured.
-  }
+  EXT_API.notifications.create({
+    type: "basic",
+    iconUrl: EXT_API.runtime.getURL("src/newtab/icon.svg"),
+    title: "MindfulTab",
+    message: "Timer ended. Pause and decide your next step."
+  }).catch(() => {
+    // Notifications can fail (e.g. SVG not supported as icon in Chrome).
+  });
 
   return endedSession;
 }
@@ -207,14 +243,20 @@ async function resetSessionForNewTab() {
   const previousSession = await getActiveSession();
   await clearTimerAlarm();
   await clearActiveSession();
+  stopBadgeTick();
   await setTimerSelectionPending(true);
   await appendHistory({ type: "session_reset_new_tab", atIso: nowIso() });
   return previousSession;
 }
 
 EXT_API.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === BADGE_ALARM_NAME) {
+    await updateBadge();
+    return;
+  }
   if (alarm.name !== TIMER_ALARM_NAME) return;
   await finishTimerIfNeeded();
+  await updateBadge();
 });
 
 EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -225,7 +267,11 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (shouldTrackUrl(url)) {
     const session = await getActiveSession();
     if (session?.ended) {
-      await EXT_API.tabs.update(tabId, { url: EXT_API.runtime.getURL("src/newtab/newtab.html") });
+      try {
+        await EXT_API.tabs.update(tabId, { url: EXT_API.runtime.getURL("src/newtab/newtab.html") });
+      } catch (_) {
+        // Tab may have already closed or navigated away.
+      }
       return;
     }
   }
@@ -298,15 +344,19 @@ EXT_API.runtime.onInstalled.addListener(async () => {
 EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     if (message?.type === "mindfultab/start-timer") {
-      const tabUrl = message.payload?.tabUrl || sender?.tab?.url || "";
-      await setTimerSelectionPending(false);
-      const session = await startTimer({
-        durationMinutes: message.payload?.durationMinutes,
-        reason: message.payload?.reason,
-        tabUrl,
-        tabId: sender?.tab?.id
-      });
-      sendResponse({ ok: true, session });
+      try {
+        const tabUrl = message.payload?.tabUrl || sender?.tab?.url || "";
+        await setTimerSelectionPending(false);
+        const session = await startTimer({
+          durationMinutes: message.payload?.durationMinutes,
+          reason: message.payload?.reason,
+          tabUrl,
+          tabId: sender?.tab?.id
+        });
+        sendResponse({ ok: true, session });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err) });
+      }
       return;
     }
 
