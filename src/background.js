@@ -48,6 +48,16 @@ async function recordDomainVisit(rawUrl, tabId) {
   if (!domain) return;
 
   const domainVisits = await getDomainVisits();
+
+  // Migrate old portless entry into the port-aware key on first encounter
+  try {
+    const hostname = new URL(rawUrl).hostname;
+    if (hostname !== domain && domainVisits[hostname] !== undefined) {
+      domainVisits[domain] = (domainVisits[domain] || 0) + domainVisits[hostname];
+      delete domainVisits[hostname];
+    }
+  } catch (_) {}
+
   domainVisits[domain] = (domainVisits[domain] || 0) + 1;
   await setDomainVisits(domainVisits);
   await upsertVisitedLink({
