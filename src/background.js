@@ -8,6 +8,23 @@ const DEFAULT_BYPASS_TIMER_MINUTES = 5;
 const lastUrlByTabId = {};
 const allowDomainUntilMs = {};
 const timerPendingTabs = new Set(); // tabIds that opened newtab but haven't started a timer yet
+let quickLaunchDomains = new Set(); // in-memory cache of unmonitored domains
+
+const QUICK_LAUNCH_FOLDER = "Quick Launch";
+
+async function refreshQuickLaunchCache() {
+  try {
+    const results = await EXT_API.bookmarks.search({ title: QUICK_LAUNCH_FOLDER });
+    const folder = results.find(r => !r.url);
+    if (!folder) { quickLaunchDomains = new Set(); return; }
+    const children = await EXT_API.bookmarks.getChildren(folder.id);
+    quickLaunchDomains = new Set(
+      children.filter(b => b.url).map(b => getDomainFromUrl(b.url)).filter(Boolean)
+    );
+  } catch (_) {
+    quickLaunchDomains = new Set();
+  }
+}
 
 function timerAlarmName(tabId) {
   return `mindfultab-timer-${tabId}`;
@@ -274,6 +291,13 @@ EXT_API.alarms.onAlarm.addListener(async (alarm) => {
 EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   const url = tab?.url || "";
+  const urlDomain = getDomainFromUrl(url);
+  if (urlDomain && quickLaunchDomains.has(urlDomain)) {
+    timerPendingTabs.delete(tabId);
+    await recordDomainVisit(url, tabId);
+    return;
+  }
+
   await startBypassTimerIfNeeded(url, tabId);
 
   if (shouldTrackUrl(url)) {
@@ -353,7 +377,17 @@ EXT_API.runtime.onInstalled.addListener(async () => {
   const settings = await getSettings();
   await setStorageValues({ [STORAGE_KEYS.SETTINGS]: settings });
   await hydrateBrowserHistoryStore(200);
+  await refreshQuickLaunchCache();
 });
+
+// Warm the cache whenever the service worker starts
+refreshQuickLaunchCache().catch(() => {});
+
+// Keep cache in sync with bookmark changes
+EXT_API.bookmarks.onCreated.addListener(() => refreshQuickLaunchCache().catch(() => {}));
+EXT_API.bookmarks.onRemoved.addListener(() => refreshQuickLaunchCache().catch(() => {}));
+EXT_API.bookmarks.onChanged.addListener(() => refreshQuickLaunchCache().catch(() => {}));
+EXT_API.bookmarks.onMoved.addListener(() => refreshQuickLaunchCache().catch(() => {}));
 
 EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {

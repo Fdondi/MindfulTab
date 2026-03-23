@@ -11,7 +11,8 @@ const DEFAULTS = self.DEFAULT_SETTINGS || {
 const state = {
   selectedMinutes: 1,
   activeSession: null,
-  settings: DEFAULTS
+  settings: DEFAULTS,
+  quickLaunchItems: []
 };
 
 const ui = {
@@ -19,7 +20,8 @@ const ui = {
   wheel: document.getElementById("duration-wheel"),
   reasonInput: document.getElementById("reason-input"),
   startBtn: document.getElementById("start-btn"),
-  statusText: document.getElementById("status-text")
+  statusText: document.getElementById("status-text"),
+  quickLaunchList: document.getElementById("quick-launch-list")
 };
 
 function buildWheel() {
@@ -192,6 +194,163 @@ async function handleStartClick() {
   document.activeElement?.blur();
 }
 
+const QUICK_LAUNCH_FOLDER = "Quick Launch";
+
+function normalizeUrl(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function labelFromUrl(url) {
+  try { return new URL(url).hostname; } catch (_) { return url; }
+}
+
+async function getOrCreateQuickLaunchFolder() {
+  const results = await self.EXT_API.bookmarks.search({ title: QUICK_LAUNCH_FOLDER });
+  const folder = results.find(r => !r.url);
+  if (folder) return folder.id;
+  const created = await self.EXT_API.bookmarks.create({ title: QUICK_LAUNCH_FOLDER });
+  return created.id;
+}
+
+function renderQuickLaunch() {
+  ui.quickLaunchList.innerHTML = "";
+
+  for (const item of state.quickLaunchItems) {
+    const li = document.createElement("li");
+    li.className = "quick-launch-item";
+
+    const a = document.createElement("a");
+    a.className = "quick-launch-link";
+    a.href = item.url;
+
+    const favicon = document.createElement("img");
+    favicon.className = "quick-launch-favicon";
+    favicon.width = 16;
+    favicon.height = 16;
+    try {
+      const hostname = new URL(item.url).hostname;
+      favicon.src = `https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${hostname}/&size=32`;
+      favicon.onerror = () => {
+        favicon.src = `https://${hostname}/favicon.ico`;
+        favicon.onerror = () => { favicon.style.display = "none"; };
+      };
+    } catch (_) {
+      favicon.style.display = "none";
+    }
+    favicon.onerror = () => { favicon.style.display = "none"; };
+    a.appendChild(favicon);
+    a.appendChild(document.createTextNode(item.label || labelFromUrl(item.url)));
+    a.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try { await sendMessage("mindfultab/bypass-timer", { reason: `Quick Launch: ${a.textContent}` }); } catch (_) {}
+      window.location.href = item.url;
+    });
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "quick-launch-remove";
+    removeBtn.type = "button";
+    removeBtn.textContent = "✕";
+    removeBtn.setAttribute("aria-label", `Remove ${a.textContent}`);
+    removeBtn.addEventListener("click", async () => {
+      await self.EXT_API.bookmarks.remove(item.id);
+      await loadQuickLaunch();
+    });
+
+    li.appendChild(a);
+    li.appendChild(removeBtn);
+    ui.quickLaunchList.appendChild(li);
+  }
+
+  // + button
+  const addLi = document.createElement("li");
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "quick-launch-add-btn";
+  addBtn.textContent = "+";
+  addBtn.setAttribute("aria-label", "Add Quick Launch item");
+  addBtn.addEventListener("click", () => {
+    addLi.removeChild(addBtn);
+    const datalist = document.createElement("datalist");
+    datalist.id = "ql-history-suggestions";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "quick-launch-inline-input";
+    input.placeholder = "e.g. calendar.google.com";
+    input.setAttribute("list", "ql-history-suggestions");
+    addLi.appendChild(datalist);
+    addLi.appendChild(input);
+    input.focus();
+
+    input.addEventListener("input", async () => {
+      const query = input.value.trim();
+      if (!query) { datalist.innerHTML = ""; return; }
+      try {
+        const results = await self.EXT_API.history.search({ text: query, maxResults: 50, startTime: 0 });
+        datalist.innerHTML = "";
+        // Show root origins only until the user types a path segment
+        const wantsPath = /^https?:\/\/[^/]+\/\S/.test(query) || (!/^https?:\/\//i.test(query) && query.includes("/"));
+        if (wantsPath) {
+          for (const r of results.slice(0, 8)) {
+            const opt = document.createElement("option");
+            opt.value = r.url;
+            if (r.title) opt.label = r.title;
+            datalist.appendChild(opt);
+          }
+        } else {
+          const seen = new Set();
+          for (const r of results) {
+            try {
+              const origin = new URL(r.url).origin;
+              if (seen.has(origin)) continue;
+              seen.add(origin);
+              const opt = document.createElement("option");
+              opt.value = origin;
+              opt.label = r.title ? `${new URL(r.url).hostname} — ${r.title}` : new URL(r.url).hostname;
+              datalist.appendChild(opt);
+              if (seen.size >= 8) break;
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    });
+
+    let committed = false;
+    async function commit() {
+      if (committed) return;
+      committed = true;
+      const url = normalizeUrl(input.value);
+      if (url && !state.quickLaunchItems.some(i => i.url === url)) {
+        const folderId = await getOrCreateQuickLaunchFolder();
+        await self.EXT_API.bookmarks.create({ parentId: folderId, title: labelFromUrl(url), url });
+      }
+      await loadQuickLaunch();
+    }
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(); }
+      if (e.key === "Escape") loadQuickLaunch();
+    });
+    input.addEventListener("blur", () => commit());
+  });
+
+  addLi.appendChild(addBtn);
+  ui.quickLaunchList.appendChild(addLi);
+}
+
+async function loadQuickLaunch() {
+  try {
+    const folderId = await getOrCreateQuickLaunchFolder();
+    const children = await self.EXT_API.bookmarks.getChildren(folderId);
+    state.quickLaunchItems = children
+      .filter(b => b.url)
+      .map(b => ({ id: b.id, url: b.url, label: b.title || labelFromUrl(b.url) }));
+    renderQuickLaunch();
+  } catch (_) {}
+}
+
 function bindEvents() {
   ui.wheel.addEventListener("scroll", () => {
     window.requestAnimationFrame(updateSelectedFromWheelScroll);
@@ -222,6 +381,7 @@ async function init() {
     // If worker is still waking up, continue with local UI.
   }
   await refreshState();
+  await loadQuickLaunch();
   state.activeSession = null;
   ui.reasonInput.value = "";
   renderLastSessionSummary(previousSession);
