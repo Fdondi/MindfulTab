@@ -5,6 +5,7 @@ if (typeof importScripts === "function") {
 const BADGE_ALARM_NAME = "mindfultab-badge-tick";
 const GATE_BYPASS_WINDOW_MS = 5 * 60 * 1000;
 const DEFAULT_BYPASS_TIMER_MINUTES = 5;
+const AUTO_BYPASS_TIMER_REASON = "Auto-started after bypassing timer selection";
 const lastUrlByTabId = {};
 const allowDomainUntilMs = {};
 const timerPendingTabs = new Set(); // tabIds that opened newtab but haven't started a timer yet
@@ -108,6 +109,14 @@ async function logInteraction(eventType, details = {}, sender = null) {
     senderUrl,
     details: details || {}
   });
+}
+
+async function traceBoundary(name, details = {}, sender = null) {
+  await logInteraction(`trace_boundary_${name}`, details, sender);
+}
+
+async function traceDecision(name, details = {}, sender = null) {
+  await logInteraction(`trace_decision_${name}`, details, sender);
 }
 
 function cleanUrlForLog(rawUrl) {
@@ -341,7 +350,7 @@ async function startBypassTimerIfNeeded(tabUrl, tabId) {
 
   const session = await startTimer({
     durationMinutes: DEFAULT_BYPASS_TIMER_MINUTES,
-    reason: "Auto-started after bypassing timer selection",
+    reason: AUTO_BYPASS_TIMER_REASON,
     tabUrl,
     tabId
   });
@@ -558,11 +567,17 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   await recoverUnderwaterKarmaCatchUp();
   const url = tab?.url || "";
+  await traceBoundary("tabs_on_updated", {
+    tabId,
+    status: changeInfo.status || "",
+    url: cleanUrlForLog(url)
+  });
   const urlDomain = getDomainFromUrl(url);
   if (urlDomain && quickLaunchDomains.has(urlDomain)) {
     const optOutDomains = await getOptOutDomains();
     // Quick Launch domains are always-allow by default, unless manually disabled in settings.
     if (!hasOwn(optOutDomains, urlDomain) || Boolean(optOutDomains[urlDomain])) {
+      await traceDecision("skip_gate_quick_launch_allowed", { tabId, domain: urlDomain });
       timerPendingTabs.delete(tabId);
       await recordDomainVisit(url, tabId);
       return;
@@ -574,6 +589,11 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (shouldTrackUrl(url)) {
     const session = await getTabSession(tabId);
     if (session?.ended) {
+      await traceDecision("ended_session_bird_phase", {
+        tabId,
+        domain: session.domain || "",
+        endedAt: Number(session.endsAt || 0)
+      });
       const birdPhaseEnds = session.endsAt + BIRD_PHASE_MS;
       if (Date.now() < birdPhaseEnds) {
         injectBirds(tabId).catch(() => {});
@@ -601,21 +621,57 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const domain = getDomainFromUrl(url);
   if (!domain) return;
 
+  // If the user already entered an intent/reason during an active timer session,
+  // we consider the reflection done and skip the "continue anyway" reflection gate.
+  const session = await getTabSession(tabId);
+  const hasActiveTimer = Boolean(session && !session.ended);
+  const sessionReason = String(session?.reason || "").trim();
+  const hasUserManagedTimer =
+    hasActiveTimer && Boolean(sessionReason) && sessionReason !== AUTO_BYPASS_TIMER_REASON;
+  if (hasUserManagedTimer) {
+    await traceDecision("skip_gate_user_managed_timer", {
+      tabId,
+      domain,
+      hasActiveTimer,
+      hasReason: Boolean(sessionReason)
+    });
+    return;
+  }
+
   const [karmaByDomain, settings, optOutDomains] = await Promise.all([
     getKarmaByDomain(),
     getSettings(),
     getOptOutDomains()
   ]);
-  if (isDomainAlwaysAllowed(domain, optOutDomains)) return;
+  if (isDomainAlwaysAllowed(domain, optOutDomains)) {
+    await traceDecision("skip_gate_always_allowed", { tabId, domain });
+    return;
+  }
   const score = karmaByDomain[domain] || 0;
   const karmaState = karmaStateForScore(score, settings.hideThresholds || DEFAULT_SETTINGS.hideThresholds);
 
-  if (karmaState === "normal") return;
-  if ((allowDomainUntilMs[domain] || 0) > Date.now()) return;
-  if (url.includes("/src/gate/gate.html")) return;
+  if (karmaState === "normal") {
+    await traceDecision("skip_gate_karma_normal", { tabId, domain, score });
+    return;
+  }
+  if ((allowDomainUntilMs[domain] || 0) > Date.now()) {
+    await traceDecision("skip_gate_bypass_window", { tabId, domain, score });
+    return;
+  }
+  if (url.includes("/src/gate/gate.html")) {
+    await traceDecision("skip_gate_already_on_gate", { tabId, domain, score });
+    return;
+  }
 
-  const gateUrl = EXT_API.runtime.getURL("src/gate/gate.html");
-  const target = `${gateUrl}?target=${encodeURIComponent(url)}&domain=${encodeURIComponent(domain)}&score=${encodeURIComponent(String(score))}`;
+  const gateUrl = EXT_API.runtime.getURL("src/newtab/newtab.html");
+  const target = `${gateUrl}?gate=1&target=${encodeURIComponent(url)}&domain=${encodeURIComponent(domain)}&score=${encodeURIComponent(String(score))}`;
+  await traceDecision("show_gate", {
+    tabId,
+    domain,
+    score,
+    karmaState,
+    target: cleanUrlForLog(url)
+  });
   await EXT_API.tabs.update(tabId, { url: target });
   await appendHistory({ type: "reflection_gate_shown", atIso: nowIso(), domain, score, targetUrl: url });
   await logInteraction("reflection_gate_shown", {
@@ -684,10 +740,21 @@ EXT_API.bookmarks.onMoved.addListener(() => refreshQuickLaunchCache().catch(() =
 EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     const senderTabId = sender?.tab?.id;
+    const messageType = String(message?.type || "");
+    await traceBoundary("runtime_on_message_received", {
+      messageType,
+      senderTabId: Number.isInteger(senderTabId) ? senderTabId : null
+    }, sender);
 
     if (message?.type === "mindfultab/start-timer") {
       try {
         const tabUrl = message.payload?.tabUrl || sender?.tab?.url || "";
+        await traceBoundary("start_timer_request", {
+          senderTabId: Number.isInteger(senderTabId) ? senderTabId : null,
+          durationMinutes: Number(message.payload?.durationMinutes || 0),
+          hasReason: Boolean(String(message.payload?.reason || "").trim()),
+          tabUrl: cleanUrlForLog(tabUrl)
+        }, sender);
         timerPendingTabs.delete(senderTabId);
         const session = await startTimer({
           durationMinutes: message.payload?.durationMinutes,
@@ -697,6 +764,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         sendResponse({ ok: true, session });
       } catch (err) {
+        await traceDecision("start_timer_failed", { error: String(err) }, sender);
         sendResponse({ ok: false, error: String(err) });
       }
       return;
@@ -767,6 +835,12 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "mindfultab/continue-anyway") {
       const { domain, reflection, targetUrl, tabId } = message.payload || {};
+      await traceBoundary("continue_anyway_request", {
+        domain: String(domain || ""),
+        target: cleanUrlForLog(String(targetUrl || "")),
+        hasReflection: Boolean(String(reflection || "").trim()),
+        tabId: Number.isInteger(tabId) ? tabId : null
+      }, sender);
       await appendReflection({
         atIso: nowIso(),
         domain: domain || "",
@@ -790,6 +864,10 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (targetUrl && typeof tabId === "number") {
         await EXT_API.tabs.update(tabId, { url: targetUrl });
       }
+      await traceDecision("continue_anyway_completed", {
+        domain: String(domain || ""),
+        target: cleanUrlForLog(String(targetUrl || ""))
+      }, sender);
       sendResponse({ ok: true });
       return;
     }

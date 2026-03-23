@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MindfulTab Reflection</title>
+    <link rel="stylesheet" href="../shared/timer-wheel.css" />
     <style>
       :root {
         --bg: #f1eff4;
@@ -65,6 +66,29 @@
         resize: vertical;
       }
 
+      .timer-required {
+        margin-top: 14px;
+        padding: 12px;
+        border: 1px solid #8c8ba0;
+        border-radius: 12px;
+        background: #f4f2f8;
+      }
+
+      .timer-required.hidden {
+        display: none;
+      }
+
+      .timer-required label {
+        display: block;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .timer-required .timer-wheel-shell {
+        width: 100%;
+        margin-bottom: 0;
+      }
+
       .actions {
         margin-top: 14px;
         display: flex;
@@ -90,10 +114,18 @@
       <p>This domain has low karma right now. You can continue anyway after a quick reflection.</p>
       <div id="domain-pill" class="pill"></div>
       <textarea id="reflection-input" maxlength="240" placeholder="What are you trying to do right now? (optional)"></textarea>
+      <section id="timer-required" class="timer-required hidden">
+        <label for="timer-minutes-wheel">Set a timer to continue</label>
+        <div class="timer-wheel-shell">
+          <div id="timer-minutes-wheel" class="timer-wheel" role="listbox" aria-label="Choose duration in minutes"></div>
+          <div class="timer-wheel-highlight"></div>
+        </div>
+      </section>
       <div class="actions">
         <button id="continue-btn">Continue anyway</button>
       </div>
     </main>
+    <script src="../shared/timer-wheel.js"></script>
     <script src="./gate.js"></script>
   </body>
 </html>
