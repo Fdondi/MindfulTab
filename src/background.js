@@ -24,7 +24,7 @@ function getDomainFromUrl(rawUrl) {
   if (!rawUrl) return "";
   try {
     const parsed = new URL(rawUrl);
-    return parsed.hostname || "";
+    return parsed.host || "";
   } catch (_) {
     return "";
   }
