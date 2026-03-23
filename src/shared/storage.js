@@ -6,6 +6,7 @@ const STORAGE_KEYS = {
   ACTIVE_SESSION: "activeSession",
   SESSIONS_BY_TAB: "sessionsByTab",
   KARMA_BY_DOMAIN: "karmaByDomain",
+  KARMA_LAST_DAILY_RECOVERY_DATE: "karmaLastDailyRecoveryDate",
   OPT_OUT_DOMAINS: "optOutDomains",
   DOMAIN_VISITS: "domainVisits",
   VISITED_LINKS: "visitedLinks",

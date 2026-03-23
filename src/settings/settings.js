@@ -125,6 +125,26 @@ function humanEventLine(item) {
       return `[${ts}] Timer started for ${Number(details.durationMinutes || 0)} min${details.intent ? ` ("${details.intent}")` : ""}${details.domain ? ` on ${details.domain}` : ""}`;
     case "session_ended":
       return `[${ts}] Timer ended${details.domain ? ` on ${details.domain}` : ""}${details.overrunPenaltyApplied ? " (karma penalty applied)" : ""}`;
+    case "bird_phase_started":
+      return `[${ts}] Bird phase started${details.domain ? ` on ${details.domain}` : ""} (raptor: #${Number(details.milestones?.raptorBird || 10)}, first penalty: #${Number(details.milestones?.firstPenaltyBird || 11)}, forced close: #${Number(details.milestones?.forcedCloseBird || 20)})`;
+    case "bird_milestone":
+      if (details.milestone === "raptor_checkpoint_reached") {
+        return `[${ts}] Raptor checkpoint reached${details.domain ? ` on ${details.domain}` : ""}${details.birdIndex ? ` (bird #${Number(details.birdIndex)})` : ""}`;
+      }
+      if (details.milestone === "forced_closure") {
+        return `[${ts}] Forced closure milestone reached${details.domain ? ` on ${details.domain}` : ""}${details.birdIndex ? ` (bird #${Number(details.birdIndex)})` : ""}`;
+      }
+      return `[${ts}] Bird milestone: ${details.milestone || "unknown"}${details.domain ? ` on ${details.domain}` : ""}`;
+    case "karma_penalty_bird_milestone":
+      if (details.reason === "passed_raptor_without_closing") {
+        return `[${ts}] Karma -${Math.max(1, Number(details.points || 1))}${details.domain ? ` on ${details.domain}` : ""} (did not close before bird #11)`;
+      }
+      if (details.reason === "forced_closure_bird_20") {
+        return `[${ts}] Karma -${Math.max(1, Number(details.points || 1))}${details.domain ? ` on ${details.domain}` : ""} (forced closure at bird #20)`;
+      }
+      return `[${ts}] Karma penalty -${Math.max(1, Number(details.points || 1))}${details.domain ? ` on ${details.domain}` : ""}`;
+    case "karma_daily_recovery":
+      return `[${ts}] Karma catch-up recovery applied to ${Math.max(0, Number(details.recoveredDomains || 0))} domain(s) after ${Math.max(0, Number(details.daysElapsed || 0))} day(s)`;
     case "reflection_gate_shown":
       return `[${ts}] Reflection gate shown for ${details.domain || "domain"}${details.karmaScore != null ? ` (karma ${details.karmaScore})` : ""}`;
     case "reflection_continue_anyway":

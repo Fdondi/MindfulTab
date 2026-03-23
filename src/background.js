@@ -45,7 +45,13 @@ function isDomainAlwaysAllowed(domain, optOutDomains) {
 
 const BIRD_COUNT = 20;
 const BIRD_INTERVAL_MS = 20_000;
-const BIRD_PHASE_MS = BIRD_COUNT * BIRD_INTERVAL_MS; // 400 s
+const RAPTOR_BIRD_INDEX = 10;
+const FIRST_KARMA_PENALTY_BIRD_INDEX = 11; // 10th is raptor, 11th triggers first penalty
+const FORCED_CLOSE_BIRD_INDEX = 20; // forced closure on 20th bird
+const RAPTOR_CHECKPOINT_MS = (RAPTOR_BIRD_INDEX - 1) * BIRD_INTERVAL_MS;
+const FIRST_KARMA_PENALTY_MS = (FIRST_KARMA_PENALTY_BIRD_INDEX - 1) * BIRD_INTERVAL_MS;
+const FORCED_CLOSE_MS = (FORCED_CLOSE_BIRD_INDEX - 1) * BIRD_INTERVAL_MS;
+const BIRD_PHASE_MS = FORCED_CLOSE_MS;
 
 function timerAlarmName(tabId) {
   return `mindfultab-timer-${tabId}`;
@@ -53,6 +59,39 @@ function timerAlarmName(tabId) {
 
 function birdsAlarmName(tabId) {
   return `mindfultab-birds-${tabId}`;
+}
+
+function birdsPenaltyAlarmName(tabId) {
+  return `mindfultab-birds-penalty-${tabId}`;
+}
+
+function birdsRaptorAlarmName(tabId) {
+  return `mindfultab-birds-raptor-${tabId}`;
+}
+
+function localDateStamp(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function nextLocalMidnightEpochMs(now = new Date()) {
+  const midnight = new Date(now);
+  midnight.setHours(24, 0, 0, 0);
+  return midnight.getTime();
+}
+
+function dayDiffFromDateStamp(lastDateStamp, now = new Date()) {
+  if (!lastDateStamp) return 0;
+  const [y, m, d] = String(lastDateStamp).split("-").map(Number);
+  if (!y || !m || !d) return 0;
+  const lastDate = new Date(y, m - 1, d);
+  lastDate.setHours(0, 0, 0, 0);
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const diffMs = today.getTime() - lastDate.getTime();
+  return Math.max(0, Math.floor(diffMs / (24 * 60 * 60 * 1000)));
 }
 
 function nowIso() {
@@ -146,6 +185,8 @@ async function clearTimerAlarm(tabId) {
 
 async function clearBirdsAlarm(tabId) {
   await EXT_API.alarms.clear(birdsAlarmName(tabId));
+  await EXT_API.alarms.clear(birdsPenaltyAlarmName(tabId));
+  await EXT_API.alarms.clear(birdsRaptorAlarmName(tabId));
 }
 
 async function scheduleTimerAlarm(tabId, endEpochMs) {
@@ -321,17 +362,12 @@ async function finishTimerIfNeeded(tabId) {
 
   const endedSession = { ...session, ended: true, nudgedAt: Date.now() };
   await setTabSession(tabId, endedSession);
-  const domain = session.domain;
-  const optOutDomains = await getOptOutDomains();
-  if (domain && !optOutDomains[domain]) {
-    await applyOverrunPenalty(domain, 1);
-  }
   await appendHistory({ type: "session_ended", atIso: nowIso(), session: endedSession });
   await logInteraction("session_ended", {
     durationMinutes: endedSession.durationMinutes,
     intent: endedSession.reason || "",
     domain: endedSession.domain || "",
-    overrunPenaltyApplied: Boolean(domain && !optOutDomains[domain])
+    overrunPenaltyApplied: false
   });
 
   EXT_API.notifications.create({
@@ -342,6 +378,97 @@ async function finishTimerIfNeeded(tabId) {
   }).catch(() => {});
 
   return endedSession;
+}
+
+async function applyBirdMilestonePenalty(tabId, points, reason) {
+  const session = await getTabSession(tabId);
+  if (!session?.ended) return false;
+  if (!session.domain) return false;
+
+  const optOutDomains = await getOptOutDomains();
+  if (isDomainAlwaysAllowed(session.domain, optOutDomains)) return false;
+
+  const score = await applyOverrunPenalty(session.domain, points);
+  await appendHistory({
+    type: "karma_penalty_bird_milestone",
+    atIso: nowIso(),
+    tabId,
+    domain: session.domain,
+    points,
+    reason,
+    score
+  });
+  await logInteraction("karma_penalty_bird_milestone", {
+    tabId,
+    domain: session.domain,
+    points,
+    reason,
+    score
+  });
+  return true;
+}
+
+async function logBirdMilestone(tabId, milestone, details = {}) {
+  const session = await getTabSession(tabId);
+  if (!session?.ended) return false;
+  if (!session.domain) return false;
+
+  await appendHistory({
+    type: "bird_milestone",
+    atIso: nowIso(),
+    tabId,
+    domain: session.domain,
+    milestone,
+    ...details
+  });
+  await logInteraction("bird_milestone", {
+    tabId,
+    domain: session.domain,
+    milestone,
+    ...details
+  });
+  return true;
+}
+
+async function recoverUnderwaterKarmaCatchUp() {
+  const today = localDateStamp();
+  const storage = await getStorageValues([STORAGE_KEYS.KARMA_LAST_DAILY_RECOVERY_DATE, STORAGE_KEYS.KARMA_BY_DOMAIN]);
+  const lastRecoveryDate = storage[STORAGE_KEYS.KARMA_LAST_DAILY_RECOVERY_DATE];
+  if (lastRecoveryDate === today) return { recoveredDomains: 0, daysElapsed: 0 };
+
+  const karmaByDomain = storage[STORAGE_KEYS.KARMA_BY_DOMAIN] || {};
+  const daysElapsed = dayDiffFromDateStamp(lastRecoveryDate);
+  if (!lastRecoveryDate) {
+    await setStorageValues({ [STORAGE_KEYS.KARMA_LAST_DAILY_RECOVERY_DATE]: today });
+    return { recoveredDomains: 0, daysElapsed: 0 };
+  }
+  if (daysElapsed < 1) return { recoveredDomains: 0, daysElapsed: 0 };
+  let recoveredDomains = 0;
+
+  for (const domain of Object.keys(karmaByDomain)) {
+    const score = Number(karmaByDomain[domain] || 0);
+    if (score < 0) {
+      karmaByDomain[domain] = Math.min(0, score + daysElapsed);
+      recoveredDomains += 1;
+    }
+  }
+
+  await setStorageValues({
+    [STORAGE_KEYS.KARMA_BY_DOMAIN]: karmaByDomain,
+    [STORAGE_KEYS.KARMA_LAST_DAILY_RECOVERY_DATE]: today
+  });
+
+  if (recoveredDomains > 0) {
+    await appendHistory({
+      type: "karma_daily_recovery",
+      atIso: nowIso(),
+      recoveredDomains,
+      daysElapsed
+    });
+    await logInteraction("karma_daily_recovery", { recoveredDomains, daysElapsed });
+  }
+
+  return { recoveredDomains, daysElapsed };
 }
 
 async function resetSessionForNewTab(tabId) {
@@ -373,15 +500,53 @@ EXT_API.alarms.onAlarm.addListener(async (alarm) => {
       const finished = await finishTimerIfNeeded(tabId);
       await updateBadge(tabId);
       if (finished) {
+        await appendHistory({
+          type: "bird_phase_started",
+          atIso: nowIso(),
+          tabId,
+          domain: finished.domain || "",
+          milestones: {
+            raptorBird: RAPTOR_BIRD_INDEX,
+            firstPenaltyBird: FIRST_KARMA_PENALTY_BIRD_INDEX,
+            forcedCloseBird: FORCED_CLOSE_BIRD_INDEX
+          }
+        });
+        await logInteraction("bird_phase_started", {
+          tabId,
+          domain: finished.domain || "",
+          milestones: {
+            raptorBird: RAPTOR_BIRD_INDEX,
+            firstPenaltyBird: FIRST_KARMA_PENALTY_BIRD_INDEX,
+            forcedCloseBird: FORCED_CLOSE_BIRD_INDEX
+          }
+        });
+        EXT_API.alarms.create(birdsRaptorAlarmName(tabId), { when: Date.now() + RAPTOR_CHECKPOINT_MS });
+        EXT_API.alarms.create(birdsPenaltyAlarmName(tabId), { when: Date.now() + FIRST_KARMA_PENALTY_MS });
         EXT_API.alarms.create(birdsAlarmName(tabId), { when: Date.now() + BIRD_PHASE_MS });
         injectBirds(tabId).catch(() => {});
       }
     }
     return;
   }
+  if (alarm.name.startsWith("mindfultab-birds-penalty-")) {
+    const tabId = Number(alarm.name.replace("mindfultab-birds-penalty-", ""));
+    if (!Number.isNaN(tabId)) {
+      await applyBirdMilestonePenalty(tabId, 1, "passed_raptor_without_closing");
+    }
+    return;
+  }
+  if (alarm.name.startsWith("mindfultab-birds-raptor-")) {
+    const tabId = Number(alarm.name.replace("mindfultab-birds-raptor-", ""));
+    if (!Number.isNaN(tabId)) {
+      await logBirdMilestone(tabId, "raptor_checkpoint_reached", { birdIndex: RAPTOR_BIRD_INDEX });
+    }
+    return;
+  }
   if (alarm.name.startsWith("mindfultab-birds-")) {
     const tabId = Number(alarm.name.replace("mindfultab-birds-", ""));
     if (!Number.isNaN(tabId)) {
+      await logBirdMilestone(tabId, "forced_closure", { birdIndex: FORCED_CLOSE_BIRD_INDEX });
+      await applyBirdMilestonePenalty(tabId, 1, "forced_closure_bird_20");
       try {
         await EXT_API.tabs.update(tabId, { url: EXT_API.runtime.getURL("src/newtab/newtab.html") });
       } catch (_) {}
@@ -391,6 +556,7 @@ EXT_API.alarms.onAlarm.addListener(async (alarm) => {
 
 EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
+  await recoverUnderwaterKarmaCatchUp();
   const url = tab?.url || "";
   const urlDomain = getDomainFromUrl(url);
   if (urlDomain && quickLaunchDomains.has(urlDomain)) {
@@ -470,6 +636,7 @@ EXT_API.tabs.onCreated.addListener(async (tab) => {
 
 EXT_API.tabs.onActivated.addListener(async (activeInfo) => {
   try {
+    await recoverUnderwaterKarmaCatchUp();
     const tab = await EXT_API.tabs.get(activeInfo.tabId);
     await recordDomainVisit(tab?.url || "", activeInfo.tabId);
     await updateBadge(activeInfo.tabId);
@@ -501,10 +668,12 @@ EXT_API.runtime.onInstalled.addListener(async () => {
   await setStorageValues({ [STORAGE_KEYS.SETTINGS]: settings });
   await hydrateBrowserHistoryStore(200);
   await refreshQuickLaunchCache();
+  await setStorageValues({ [STORAGE_KEYS.KARMA_LAST_DAILY_RECOVERY_DATE]: localDateStamp() });
 });
 
 // Warm the cache whenever the service worker starts
 refreshQuickLaunchCache().catch(() => {});
+recoverUnderwaterKarmaCatchUp().catch(() => {});
 
 // Keep cache in sync with bookmark changes
 EXT_API.bookmarks.onCreated.addListener(() => refreshQuickLaunchCache().catch(() => {}));
@@ -534,6 +703,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     if (message?.type === "mindfultab/get-state") {
+      await recoverUnderwaterKarmaCatchUp();
       if (senderTabId != null) await finishTimerIfNeeded(senderTabId);
       const session = senderTabId != null ? await getTabSession(senderTabId) : null;
       const [karmaByDomain, domainVisits, settings] = await Promise.all([

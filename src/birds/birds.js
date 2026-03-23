@@ -7,20 +7,22 @@
   const MIN_SPEED = 1.5;
   const MAX_SPEED = 3;
   const BODY_COLORS = ['#86EFAC', '#D8B4FE', '#FCA5A5'];
+  const RAPTOR_COLOR = "#f97316";
 
   let colorIndex = 0;
+  let spawnedBirds = 0;
   const birds = [];
   let ticking = false;
   let lastFrame = 0;
 
-  function makeSVG(bodyColor) {
+  function makeSVG(bodyColor, isRaptor) {
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-      <path fill="#5D4037" d="M14,46C18,42 24,40 32,40C40,40 46,42 50,46L48,50C44,47 38.7,45.7 32,45.7C25.3,45.7 20,47 16,50Z"/>
+      <path fill="#5D4037" d="${isRaptor ? "M10,48C16,40 24,36 32,36C40,36 48,40 54,48L50,52C45,46 39,43 32,43C25,43 19,46 14,52Z" : "M14,46C18,42 24,40 32,40C40,40 46,42 50,46L48,50C44,47 38.7,45.7 32,45.7C25.3,45.7 20,47 16,50Z"}"/>
       <path fill="${bodyColor}" d="M31.5,18C38.4,18 44,23.6 44,30.5C44,37.4 38.4,43 31.5,43C24.6,43 19,37.4 19,30.5C19,23.6 24.6,18 31.5,18Z"/>
-      <path fill="#FFAB40" d="M42,29C47,30 50.7,32.2 53,35.8L48.8,36.8C46.9,34.5 44.3,33 40.6,32.2Z"/>
+      <path fill="#FFAB40" d="${isRaptor ? "M41.5,28.5C48,29.5 52.5,33 55,37.5L49,39C46.8,35.6 44,33.5 39.8,32.8Z" : "M42,29C47,30 50.7,32.2 53,35.8L48.8,36.8C46.9,34.5 44.3,33 40.6,32.2Z"}"/>
       <path fill="#6D4C41" d="M23.8,30.4C27.2,25.7 32.5,23 38.3,23.2C34.7,20 29.3,19.1 24.7,21C20.1,22.9 16.8,27.3 16,32.1C18.2,31.3 20.9,30.8 23.8,30.4Z"/>
       <path fill="#5D4037" d="M35.5,30.1C36.7,30.1 37.7,31.1 37.7,32.3C37.7,33.5 36.7,34.5 35.5,34.5C34.3,34.5 33.3,33.5 33.3,32.3C33.3,31.1 34.3,30.1 35.5,30.1Z"/>
-      <path fill="#FF8F00" d="M40.2,33.2L45.4,31.8L40.9,36.1Z"/>
+      <path fill="#FF8F00" d="${isRaptor ? "M39.8,33.5L48.5,30.8L42.8,37.3Z" : "M40.2,33.2L45.4,31.8L40.9,36.1Z"}"/>
     </svg>`;
   }
 
@@ -30,9 +32,11 @@
   }
 
   function spawnBird() {
+    spawnedBirds += 1;
+    const isRaptor = spawnedBirds % 10 === 0;
     const el = document.createElement('div');
     el.className = 'mindfultab-flying-bird';
-    el.innerHTML = makeSVG(BODY_COLORS[colorIndex % BODY_COLORS.length]);
+    el.innerHTML = makeSVG(isRaptor ? RAPTOR_COLOR : BODY_COLORS[colorIndex % BODY_COLORS.length], isRaptor);
     colorIndex++;
 
     const x = Math.random() * (window.innerWidth - BIRD_SIZE);
