@@ -9,7 +9,8 @@
     "alarms",
     "notifications",
     "history",
-    "bookmarks"
+    "bookmarks",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"

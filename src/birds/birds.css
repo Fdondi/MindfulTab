@@ -1,0 +1,8 @@
+.mindfultab-flying-bird {
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  pointer-events: none !important;
+  width: 64px !important;
+  height: 64px !important;
+  transform-origin: center !important;
+}

@@ -26,8 +26,16 @@ async function refreshQuickLaunchCache() {
   }
 }
 
+const BIRD_COUNT = 20;
+const BIRD_INTERVAL_MS = 20_000;
+const BIRD_PHASE_MS = BIRD_COUNT * BIRD_INTERVAL_MS; // 400 s
+
 function timerAlarmName(tabId) {
   return `mindfultab-timer-${tabId}`;
+}
+
+function birdsAlarmName(tabId) {
+  return `mindfultab-birds-${tabId}`;
 }
 
 function nowIso() {
@@ -94,6 +102,10 @@ async function stopBadgeTickIfIdle() {
 
 async function clearTimerAlarm(tabId) {
   await EXT_API.alarms.clear(timerAlarmName(tabId));
+}
+
+async function clearBirdsAlarm(tabId) {
+  await EXT_API.alarms.clear(birdsAlarmName(tabId));
 }
 
 async function scheduleTimerAlarm(tabId, endEpochMs) {
@@ -266,12 +278,18 @@ async function resetSessionForNewTab(tabId) {
   const previousSession = await getTabSession(tabId);
   if (tabId != null) {
     await clearTimerAlarm(tabId);
+    await clearBirdsAlarm(tabId);
     await clearTabSession(tabId);
   }
   timerPendingTabs.add(tabId);
   await appendHistory({ type: "session_reset_new_tab", atIso: nowIso() });
   await stopBadgeTickIfIdle();
   return previousSession;
+}
+
+async function injectBirds(tabId) {
+  await EXT_API.scripting.insertCSS({ target: { tabId }, files: ["src/birds/birds.css"] });
+  await EXT_API.scripting.executeScript({ target: { tabId }, files: ["src/birds/birds.js"] });
 }
 
 EXT_API.alarms.onAlarm.addListener(async (alarm) => {
@@ -282,8 +300,21 @@ EXT_API.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name.startsWith("mindfultab-timer-")) {
     const tabId = Number(alarm.name.replace("mindfultab-timer-", ""));
     if (!Number.isNaN(tabId)) {
-      await finishTimerIfNeeded(tabId);
+      const finished = await finishTimerIfNeeded(tabId);
       await updateBadge(tabId);
+      if (finished) {
+        EXT_API.alarms.create(birdsAlarmName(tabId), { when: Date.now() + BIRD_PHASE_MS });
+        injectBirds(tabId).catch(() => {});
+      }
+    }
+    return;
+  }
+  if (alarm.name.startsWith("mindfultab-birds-")) {
+    const tabId = Number(alarm.name.replace("mindfultab-birds-", ""));
+    if (!Number.isNaN(tabId)) {
+      try {
+        await EXT_API.tabs.update(tabId, { url: EXT_API.runtime.getURL("src/newtab/newtab.html") });
+      } catch (_) {}
     }
   }
 });
@@ -303,10 +334,13 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (shouldTrackUrl(url)) {
     const session = await getTabSession(tabId);
     if (session?.ended) {
-      try {
-        await EXT_API.tabs.update(tabId, { url: EXT_API.runtime.getURL("src/newtab/newtab.html") });
-      } catch (_) {
-        // Tab may have already closed or navigated away.
+      const birdPhaseEnds = session.endsAt + BIRD_PHASE_MS;
+      if (Date.now() < birdPhaseEnds) {
+        injectBirds(tabId).catch(() => {});
+      } else {
+        try {
+          await EXT_API.tabs.update(tabId, { url: EXT_API.runtime.getURL("src/newtab/newtab.html") });
+        } catch (_) {}
       }
       return;
     }
@@ -368,6 +402,7 @@ EXT_API.tabs.onActivated.addListener(async (activeInfo) => {
 EXT_API.tabs.onRemoved.addListener(async (tabId) => {
   delete lastUrlByTabId[tabId];
   timerPendingTabs.delete(tabId);
+  await clearBirdsAlarm(tabId);
 
   const session = await getTabSession(tabId);
   if (!session || session.ended) return;
