@@ -346,6 +346,15 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   await appendHistory({ type: "reflection_gate_shown", atIso: nowIso(), domain, score, targetUrl: url });
 });
 
+EXT_API.tabs.onCreated.addListener(async (tab) => {
+  if (!tab.openerTabId) return;
+  const parentSession = await getTabSession(tab.openerTabId);
+  if (!parentSession || parentSession.ended || Date.now() >= parentSession.endsAt) return;
+  const childSession = { ...parentSession, tabId: tab.id };
+  await setTabSession(tab.id, childSession);
+  await scheduleTimerAlarm(tab.id, childSession.endsAt);
+});
+
 EXT_API.tabs.onActivated.addListener(async (activeInfo) => {
   try {
     const tab = await EXT_API.tabs.get(activeInfo.tabId);
