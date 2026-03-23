@@ -9,6 +9,17 @@ function getParams() {
   };
 }
 
+async function logInteraction(eventType, details = {}) {
+  try {
+    await EXT_API.runtime.sendMessage({
+      type: "mindfultab/log-interaction",
+      payload: { eventType, details }
+    });
+  } catch (_) {
+    // Best-effort logging only.
+  }
+}
+
 async function continueAnyway() {
   const { targetUrl, domain } = getParams();
   const reflection = document.getElementById("reflection-input").value.trim();

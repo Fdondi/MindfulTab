@@ -9,22 +9,61 @@
   <body>
     <main class="page">
       <header class="header">
-        <h1>Karma Settings</h1>
-        <button id="refresh-btn" type="button">Refresh</button>
+        <h1>MindfulTab Settings</h1>
       </header>
-      <p class="subtle">
-        Manage per-domain karma forgiveness and permanent opt-out here, outside the main browsing flow.
-      </p>
-      <section class="panel">
-        <div class="table-head">
-          <span>Domain</span>
-          <span>Karma</span>
-          <span>Visits</span>
-          <span>Opt-out</span>
-          <span>Actions</span>
+      <div class="tab-bar" role="tablist" aria-label="Settings sections">
+        <button id="tab-karma" class="tab-btn active" type="button" role="tab" aria-selected="true">Karma</button>
+        <button id="tab-logs" class="tab-btn" type="button" role="tab" aria-selected="false">Logs</button>
+      </div>
+      <p id="status-message" class="status-message hidden" aria-live="polite"></p>
+      <section id="karma-panel" class="tab-panel">
+        <div class="panel-head">
+          <p class="subtle">
+            Manage per-domain karma forgiveness and permanent opt-out here, outside the main browsing flow.
+          </p>
+          <div class="header-actions">
+            <button id="forgive-all-btn" type="button" class="danger">Forgive all karma</button>
+            <button id="refresh-btn" type="button">Refresh</button>
+          </div>
         </div>
-        <ul id="domain-list" class="domain-list"></ul>
-        <p id="empty-state" class="empty hidden">No tracked domains yet.</p>
+        <section class="stats-panel">
+          <article class="stat">
+            <p class="stat-label">Tracked domains</p>
+            <p id="stat-domains" class="stat-value">0</p>
+          </article>
+          <article class="stat">
+            <p class="stat-label">Negative karma domains</p>
+            <p id="stat-negative" class="stat-value">0</p>
+          </article>
+          <article class="stat">
+            <p class="stat-label">Total karma score</p>
+            <p id="stat-total" class="stat-value">0</p>
+          </article>
+        </section>
+        <section class="panel">
+          <div class="table-head">
+            <span>Domain</span>
+            <span>Karma</span>
+            <span>Visits</span>
+            <span>Opt-out</span>
+            <span>Actions</span>
+          </div>
+          <ul id="domain-list" class="domain-list"></ul>
+          <p id="empty-state" class="empty hidden">No tracked domains yet.</p>
+        </section>
+      </section>
+      <section id="logs-panel" class="tab-panel hidden">
+        <div class="panel-head">
+          <p class="subtle">Grouped by session (each new tab opening starts a new session file).</p>
+          <div class="header-actions">
+            <button id="clear-interactions-btn" type="button">Clear logs</button>
+            <button id="refresh-interactions-btn" type="button">Refresh logs</button>
+          </div>
+        </div>
+        <section id="interaction-review" class="panel interactions-panel">
+          <ul id="interaction-list" class="interaction-list"></ul>
+          <p id="interaction-empty-state" class="empty hidden">No interactions logged yet.</p>
+        </section>
       </section>
     </main>
     <script src="./settings.js"></script>

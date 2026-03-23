@@ -26,6 +26,23 @@ async function refreshQuickLaunchCache() {
   }
 }
 
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function isQuickLaunchDomain(domain) {
+  return quickLaunchDomains.has(String(domain || "").trim().toLowerCase());
+}
+
+function isDomainAlwaysAllowed(domain, optOutDomains) {
+  const key = String(domain || "").trim().toLowerCase();
+  if (!key) return false;
+  if (hasOwn(optOutDomains, key)) {
+    return Boolean(optOutDomains[key]);
+  }
+  return isQuickLaunchDomain(key);
+}
+
 const BIRD_COUNT = 20;
 const BIRD_INTERVAL_MS = 20_000;
 const BIRD_PHASE_MS = BIRD_COUNT * BIRD_INTERVAL_MS; // 400 s
@@ -40,6 +57,29 @@ function birdsAlarmName(tabId) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+async function logInteraction(eventType, details = {}, sender = null) {
+  const tabId = sender?.tab?.id;
+  const senderUrl = sender?.tab?.url || "";
+  await appendInteraction({
+    atIso: nowIso(),
+    eventType: String(eventType || "unknown"),
+    tabId: Number.isInteger(tabId) ? tabId : null,
+    senderUrl,
+    details: details || {}
+  });
+}
+
+function cleanUrlForLog(rawUrl) {
+  if (!rawUrl) return "";
+  try {
+    const parsed = new URL(rawUrl);
+    const trimmedPath = parsed.pathname === "/" ? "" : parsed.pathname;
+    return `${parsed.hostname}${trimmedPath}`;
+  } catch (_) {
+    return "";
+  }
 }
 
 async function updateBadge(tabId) {
@@ -156,6 +196,25 @@ async function recordDomainVisit(rawUrl, tabId) {
   }
 }
 
+async function setDomainKarmaToNeutral(domain) {
+  const key = String(domain || "").trim().toLowerCase();
+  if (!key) return null;
+  const karmaByDomain = await getKarmaByDomain();
+  karmaByDomain[key] = 0;
+  await setKarmaByDomain(karmaByDomain);
+  return karmaByDomain[key];
+}
+
+async function forgiveAllDomainKarma() {
+  const karmaByDomain = await getKarmaByDomain();
+  const domains = Object.keys(karmaByDomain);
+  for (const domain of domains) {
+    karmaByDomain[domain] = 0;
+  }
+  await setKarmaByDomain(karmaByDomain);
+  return domains.length;
+}
+
 async function fetchBrowserHistoryLinks(limit) {
   if (!EXT_API.history?.search) return [];
   const items = await EXT_API.history.search({
@@ -220,6 +279,11 @@ async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
   await scheduleTimerAlarm(ownerTabId, endsAt);
   startBadgeTick();
   await appendHistory({ type: "session_started", atIso: nowIso(), session });
+  await logInteraction("session_started", {
+    durationMinutes: session.durationMinutes,
+    intent: session.reason || "",
+    domain: session.domain || ""
+  });
 
   return session;
 }
@@ -263,6 +327,12 @@ async function finishTimerIfNeeded(tabId) {
     await applyOverrunPenalty(domain, 1);
   }
   await appendHistory({ type: "session_ended", atIso: nowIso(), session: endedSession });
+  await logInteraction("session_ended", {
+    durationMinutes: endedSession.durationMinutes,
+    intent: endedSession.reason || "",
+    domain: endedSession.domain || "",
+    overrunPenaltyApplied: Boolean(domain && !optOutDomains[domain])
+  });
 
   EXT_API.notifications.create({
     type: "basic",
@@ -324,9 +394,13 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const url = tab?.url || "";
   const urlDomain = getDomainFromUrl(url);
   if (urlDomain && quickLaunchDomains.has(urlDomain)) {
-    timerPendingTabs.delete(tabId);
-    await recordDomainVisit(url, tabId);
-    return;
+    const optOutDomains = await getOptOutDomains();
+    // Quick Launch domains are always-allow by default, unless manually disabled in settings.
+    if (!hasOwn(optOutDomains, urlDomain) || Boolean(optOutDomains[urlDomain])) {
+      timerPendingTabs.delete(tabId);
+      await recordDomainVisit(url, tabId);
+      return;
+    }
   }
 
   await startBypassTimerIfNeeded(url, tabId);
@@ -366,7 +440,7 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     getSettings(),
     getOptOutDomains()
   ]);
-  if (optOutDomains[domain]) return;
+  if (isDomainAlwaysAllowed(domain, optOutDomains)) return;
   const score = karmaByDomain[domain] || 0;
   const karmaState = karmaStateForScore(score, settings.hideThresholds || DEFAULT_SETTINGS.hideThresholds);
 
@@ -378,6 +452,11 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const target = `${gateUrl}?target=${encodeURIComponent(url)}&domain=${encodeURIComponent(domain)}&score=${encodeURIComponent(String(score))}`;
   await EXT_API.tabs.update(tabId, { url: target });
   await appendHistory({ type: "reflection_gate_shown", atIso: nowIso(), domain, score, targetUrl: url });
+  await logInteraction("reflection_gate_shown", {
+    domain,
+    karmaScore: score,
+    target: cleanUrlForLog(url)
+  });
 });
 
 EXT_API.tabs.onCreated.addListener(async (tab) => {
@@ -492,6 +571,30 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message?.type === "mindfultab/log-interaction") {
+      const eventType = String(message.payload?.eventType || "").trim();
+      if (!eventType) {
+        sendResponse({ ok: false, error: "eventType is required" });
+        return;
+      }
+      await logInteraction(eventType, message.payload?.details || {}, sender);
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (message?.type === "mindfultab/get-interactions") {
+      const interactions = await getInteractions();
+      sendResponse({ ok: true, interactions });
+      return;
+    }
+
+    if (message?.type === "mindfultab/clear-interactions") {
+      await clearInteractions();
+      await appendHistory({ type: "interactions_cleared", atIso: nowIso() });
+      sendResponse({ ok: true });
+      return;
+    }
+
     if (message?.type === "mindfultab/continue-anyway") {
       const { domain, reflection, targetUrl, tabId } = message.payload || {};
       await appendReflection({
@@ -505,6 +608,12 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         domain: domain || "",
         targetUrl: targetUrl || ""
       });
+      await logInteraction("reflection_continue_anyway", {
+        domain: domain || "",
+        target: cleanUrlForLog(targetUrl || ""),
+        wroteReflection: Boolean(String(reflection || "").trim()),
+        reflectionText: String(reflection || "").trim()
+      }, sender);
       if (domain) {
         allowDomainUntilMs[domain] = Date.now() + GATE_BYPASS_WINDOW_MS;
       }
@@ -521,7 +630,13 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         getOptOutDomains(),
         getDomainVisits()
       ]);
-      sendResponse({ ok: true, karmaByDomain, optOutDomains, domainVisits });
+      sendResponse({
+        ok: true,
+        karmaByDomain,
+        optOutDomains,
+        domainVisits,
+        quickLaunchDomains: Array.from(quickLaunchDomains)
+      });
       return;
     }
 
@@ -531,9 +646,18 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: false, error: "Domain is required" });
         return;
       }
-      const score = await applyRecovery(domain, 1);
+      const score = await setDomainKarmaToNeutral(domain);
       await appendHistory({ type: "karma_forgiven", atIso: nowIso(), domain });
+      await logInteraction("karma_forgiven", { domain }, sender);
       sendResponse({ ok: true, domain, score });
+      return;
+    }
+
+    if (message?.type === "mindfultab/forgive-all-karma") {
+      const updatedDomains = await forgiveAllDomainKarma();
+      await appendHistory({ type: "karma_forgiven_all", atIso: nowIso(), updatedDomains });
+      await logInteraction("karma_forgiven_all", { updatedDomains }, sender);
+      sendResponse({ ok: true, updatedDomains });
       return;
     }
 
@@ -545,8 +669,9 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
       const optOutDomains = await getOptOutDomains();
-      if (optedOut) {
-        optOutDomains[domain] = true;
+      if (optedOut || isQuickLaunchDomain(domain)) {
+        // Keep explicit false for Quick Launch domains so users can disable default always-allow.
+        optOutDomains[domain] = optedOut;
       } else {
         delete optOutDomains[domain];
       }
@@ -556,6 +681,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         atIso: nowIso(),
         domain
       });
+      await logInteraction(optedOut ? "always_allow_enabled" : "always_allow_disabled", { domain }, sender);
       sendResponse({ ok: true, domain, optedOut });
       return;
     }

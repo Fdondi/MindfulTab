@@ -21,7 +21,9 @@ const ui = {
   reasonInput: document.getElementById("reason-input"),
   startBtn: document.getElementById("start-btn"),
   statusText: document.getElementById("status-text"),
-  quickLaunchList: document.getElementById("quick-launch-list")
+  quickLaunchList: document.getElementById("quick-launch-list"),
+  openSettingsBtn: document.getElementById("open-settings-btn"),
+  openLogsBtn: document.getElementById("open-logs-btn")
 };
 
 function buildWheel() {
@@ -156,6 +158,14 @@ async function sendMessage(type, payload = {}) {
   return self.EXT_API.runtime.sendMessage({ type, payload });
 }
 
+async function logInteraction(eventType, details = {}) {
+  try {
+    await sendMessage("mindfultab/log-interaction", { eventType, details });
+  } catch (_) {
+    // Best-effort logging only.
+  }
+}
+
 async function refreshState() {
   let response;
   try {
@@ -245,6 +255,10 @@ function renderQuickLaunch() {
     a.appendChild(document.createTextNode(item.label || labelFromUrl(item.url)));
     a.addEventListener("click", async (e) => {
       e.preventDefault();
+      await logInteraction("newtab_quick_launch_click", {
+        url: item.url,
+        label: item.label || labelFromUrl(item.url)
+      });
       try { await sendMessage("mindfultab/bypass-timer", { reason: `Quick Launch: ${a.textContent}` }); } catch (_) {}
       window.location.href = item.url;
     });
@@ -255,6 +269,7 @@ function renderQuickLaunch() {
     removeBtn.textContent = "✕";
     removeBtn.setAttribute("aria-label", `Remove ${a.textContent}`);
     removeBtn.addEventListener("click", async () => {
+      await logInteraction("newtab_quick_launch_remove", { url: item.url });
       await self.EXT_API.bookmarks.remove(item.id);
       await loadQuickLaunch();
     });
@@ -272,6 +287,7 @@ function renderQuickLaunch() {
   addBtn.textContent = "+";
   addBtn.setAttribute("aria-label", "Add Quick Launch item");
   addBtn.addEventListener("click", () => {
+    logInteraction("newtab_quick_launch_add_open", {}).catch(() => {});
     addLi.removeChild(addBtn);
     const datalist = document.createElement("datalist");
     datalist.id = "ql-history-suggestions";
@@ -323,6 +339,7 @@ function renderQuickLaunch() {
       committed = true;
       const url = normalizeUrl(input.value);
       if (url && !state.quickLaunchItems.some(i => i.url === url)) {
+        await logInteraction("newtab_quick_launch_add_commit", { url });
         const folderId = await getOrCreateQuickLaunchFolder();
         await self.EXT_API.bookmarks.create({ parentId: folderId, title: labelFromUrl(url), url });
       }
@@ -360,6 +377,22 @@ function bindEvents() {
       ui.statusText.textContent = "Could not start timer. Try again.";
     });
   });
+  ui.openSettingsBtn?.addEventListener("click", async () => {
+    await logInteraction("newtab_open_settings_click", {});
+    try {
+      if (self.EXT_API.runtime.openOptionsPage) {
+        await self.EXT_API.runtime.openOptionsPage();
+      } else {
+        window.location.href = self.EXT_API.runtime.getURL("src/settings/settings.html");
+      }
+    } catch (_) {
+      window.location.href = self.EXT_API.runtime.getURL("src/settings/settings.html");
+    }
+  });
+  ui.openLogsBtn?.addEventListener("click", async () => {
+    await logInteraction("newtab_open_logs_click", {});
+    window.location.href = `${self.EXT_API.runtime.getURL("src/settings/settings.html")}#interaction-review`;
+  });
 }
 
 function startTicking() {
@@ -369,6 +402,7 @@ function startTicking() {
 }
 
 async function init() {
+  await logInteraction("newtab_opened", {});
   buildWheel();
   bindEvents();
   setSelectedMinutes(1, true);

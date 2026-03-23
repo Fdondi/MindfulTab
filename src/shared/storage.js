@@ -11,7 +11,8 @@ const STORAGE_KEYS = {
   VISITED_LINKS: "visitedLinks",
   SEARCH_INDEX: "searchIndex",
   REFLECTIONS: "reflections",
-  HISTORY: "history"
+  HISTORY: "history",
+  INTERACTIONS: "interactions"
 };
 
 const DEFAULT_SETTINGS = {
@@ -161,6 +162,21 @@ async function appendReflection(item) {
   return setStorageValues({ [STORAGE_KEYS.REFLECTIONS]: reflections.slice(0, 500) });
 }
 
+async function getInteractions() {
+  const result = await getStorageValues(STORAGE_KEYS.INTERACTIONS);
+  return result[STORAGE_KEYS.INTERACTIONS] || [];
+}
+
+async function appendInteraction(item) {
+  const interactions = await getInteractions();
+  interactions.unshift(item);
+  return setStorageValues({ [STORAGE_KEYS.INTERACTIONS]: interactions.slice(0, 3000) });
+}
+
+async function clearInteractions() {
+  return setStorageValues({ [STORAGE_KEYS.INTERACTIONS]: [] });
+}
+
 self.STORAGE_KEYS = STORAGE_KEYS;
 self.DEFAULT_SETTINGS = DEFAULT_SETTINGS;
 self.getStorageValues = getStorageValues;
@@ -186,3 +202,6 @@ self.getSearchIndex = getSearchIndex;
 self.setSearchIndex = setSearchIndex;
 self.appendHistory = appendHistory;
 self.appendReflection = appendReflection;
+self.getInteractions = getInteractions;
+self.appendInteraction = appendInteraction;
+self.clearInteractions = clearInteractions;
