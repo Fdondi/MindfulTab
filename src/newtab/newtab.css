@@ -79,14 +79,6 @@ body {
   font-size: 16px;
 }
 
-.last-session-summary.warning {
-  color: #7a3a00;
-  background: #fde8cc;
-  border-radius: 10px;
-  padding: 10px 16px;
-  font-weight: 600;
-}
-
 .reason-label {
   position: absolute;
   width: 1px;
