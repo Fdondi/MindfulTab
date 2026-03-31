@@ -1,0 +1,80 @@
+/* Shared AI intent panel — include on newtab and gate. Expects :root --accent-soft, --card, --accent-strong, --input-border, --text */
+.ai-intent-panel {
+  width: min(760px, 100%);
+  margin-top: 20px;
+  margin-bottom: 8px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--accent-soft);
+  background: var(--card);
+  scroll-margin-top: 24px;
+}
+
+.ai-intent-panel.hidden {
+  display: none;
+}
+
+.ai-intent-message {
+  margin: 0 0 14px;
+  font-size: 17px;
+  line-height: 1.45;
+  color: #2a2b3d;
+}
+
+.ai-intent-reply-block {
+  margin-bottom: 4px;
+}
+
+.ai-intent-reply-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: #3f3f54;
+  margin-bottom: 8px;
+}
+
+.ai-intent-reply-input,
+textarea.ai-intent-reply-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--input-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 20px;
+  line-height: 1.2;
+  font-family: inherit;
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--text);
+}
+
+.ai-intent-reply-input::placeholder {
+  color: #5c5c6b;
+}
+
+.ai-intent-confirm-actions,
+.ai-intent-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.ai-intent-confirm-actions.hidden,
+.ai-intent-notice-actions.hidden {
+  display: none;
+}
+
+.ai-intent-btn {
+  border: none;
+  border-radius: 10px;
+  background: var(--accent-strong);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.ai-intent-btn.secondary {
+  background: #6b7199;
+}

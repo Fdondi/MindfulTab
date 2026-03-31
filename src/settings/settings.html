@@ -13,6 +13,7 @@
       </header>
       <div class="tab-bar" role="tablist" aria-label="Settings sections">
         <button id="tab-karma" class="tab-btn active" type="button" role="tab" aria-selected="true">Karma</button>
+        <button id="tab-ai" class="tab-btn" type="button" role="tab" aria-selected="false">AI</button>
         <button id="tab-logs" class="tab-btn" type="button" role="tab" aria-selected="false">Logs</button>
       </div>
       <p id="status-message" class="status-message hidden" aria-live="polite"></p>
@@ -52,6 +53,36 @@
           <p id="empty-state" class="empty hidden">No tracked domains yet.</p>
         </section>
       </section>
+      <section id="ai-panel" class="tab-panel hidden">
+        <div class="panel-head">
+          <p class="subtle">
+            Same Gemini backend and Google sign-in flow as
+            <a href="https://github.com/Fdondi/MindfulHome" rel="noopener noreferrer" target="_blank">MindfulHome</a>
+            (exchange Google ID token for an app token; nothing to paste).
+          </p>
+        </div>
+        <section class="panel ai-settings-panel">
+          <p id="ai-account-status" class="ai-account-status" aria-live="polite">Not signed in.</p>
+          <div class="ai-auth-actions">
+            <button id="ai-google-auth-btn" type="button" class="primary">Sign in with Google</button>
+          </div>
+          <p class="subtle ai-oauth-hint">
+            The Google Cloud OAuth client for this backend must list your extension redirect URL:
+            <code id="ai-redirect-uri-preview"></code>
+            (shown for your current install; add it in Google Cloud Console if sign-in fails).
+          </p>
+          <label class="field-label" for="ai-base-url">Backend base URL</label>
+          <input id="ai-base-url" class="field-input" type="url" autocomplete="off" />
+          <p class="subtle ai-model-note">Model is fixed to <code>gemini-2.5-flash-lite</code>.</p>
+          <label class="field-check">
+            <input id="ai-validate-intents" type="checkbox" />
+            Validate intent text before starting a timer (short nonsense rejected; long sessions may ask for confirmation)
+          </label>
+          <div class="header-actions" style="margin-top: 14px">
+            <button id="ai-save-btn" type="button" class="primary">Save other AI settings</button>
+          </div>
+        </section>
+      </section>
       <section id="logs-panel" class="tab-panel hidden">
         <div class="panel-head">
           <p class="subtle">Grouped by session (each new tab opening starts a new session file).</p>
@@ -66,6 +97,7 @@
         </section>
       </section>
     </main>
+    <script src="../shared/google-oauth.js"></script>
     <script src="./settings.js"></script>
   </body>
 </html>

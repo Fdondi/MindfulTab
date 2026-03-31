@@ -2,6 +2,14 @@ const EXT_API = typeof browser !== "undefined" ? browser : chrome;
 const AUTO_BYPASS_TIMER_REASON = "Auto-started after bypassing timer selection";
 let timerWheel = null;
 
+function getReflectionEl() {
+  return document.getElementById("reflection-input");
+}
+
+const intentFeedback = self.MINDFULTAB_INTENT_FEEDBACK.createMindfulTabIntentFeedback({
+  getMainReason: () => String(getReflectionEl()?.value || "").trim()
+});
+
 function getParams() {
   const params = new URLSearchParams(window.location.search);
   return {
@@ -23,9 +31,13 @@ async function logInteraction(eventType, details = {}) {
   }
 }
 
+async function traceDecision(name, details = {}) {
+  await logInteraction(`trace_decision_${name}`, details);
+}
+
 async function continueAnyway() {
   const { targetUrl, domain } = getParams();
-  const reflection = document.getElementById("reflection-input").value.trim();
+  const reflection = String(getReflectionEl()?.value || "").trim();
   const current = await EXT_API.tabs.getCurrent();
   const tab = current || (await EXT_API.tabs.query({ active: true, currentWindow: true }))[0];
 
@@ -45,29 +57,53 @@ function getTimerMinutes() {
   return timerWheel.getMinutes();
 }
 
-async function startTimerIfNeeded() {
+/**
+ * @returns {Promise<boolean>} true if OK to continue navigation
+ */
+async function startTimerIfNeeded(confirmedLongSession = false) {
   const { targetUrl, requireTimer } = getParams();
-  if (!requireTimer) return false;
+  if (!requireTimer) return true;
 
-  // Only skip timer start when there is already a user-managed active timer.
   const stateResp = await EXT_API.runtime.sendMessage({ type: "mindfultab/get-state" }).catch(() => null);
   const session = stateResp?.session;
   const hasActiveTimer = Boolean(session && !session.ended);
   const sessionReason = String(session?.reason || "").trim();
   const hasUserManagedTimer =
     hasActiveTimer && Boolean(sessionReason) && sessionReason !== AUTO_BYPASS_TIMER_REASON;
-  if (hasUserManagedTimer) return false;
+  if (hasUserManagedTimer) return true;
 
-  const reflection = document.getElementById("reflection-input").value.trim();
-  await EXT_API.runtime.sendMessage({
+  const reason = intentFeedback.getEffectiveReason();
+  const resp = await EXT_API.runtime.sendMessage({
     type: "mindfultab/start-timer",
     payload: {
       durationMinutes: getTimerMinutes(),
-      reason: reflection,
-      tabUrl: targetUrl
+      reason,
+      tabUrl: targetUrl,
+      confirmedLongSession: Boolean(confirmedLongSession)
     }
   });
-  return true;
+
+  const result = await intentFeedback.handleStartTimerResponse(resp, { traceDecision });
+  return result.ok;
+}
+
+function bindIntentButtons(continueBtn) {
+  document.getElementById("ai-intent-proceed")?.addEventListener("click", () => {
+    (async () => {
+      const ok = await startTimerIfNeeded(true);
+      if (!ok) return;
+      await continueAnyway();
+    })().catch(() => {
+      intentFeedback.showNotice("Could not continue. Try again.");
+      continueBtn.textContent = "Try again";
+    });
+  });
+  document.getElementById("ai-intent-dismiss")?.addEventListener("click", () => {
+    intentFeedback.hide();
+  });
+  document.getElementById("ai-intent-notice-dismiss")?.addEventListener("click", () => {
+    intentFeedback.hide();
+  });
 }
 
 function init() {
@@ -90,9 +126,13 @@ function init() {
   if (requireTimer) {
     continueBtn.textContent = "Start timer and continue";
   }
+
+  bindIntentButtons(continueBtn);
+
   continueBtn.addEventListener("click", () => {
     (async () => {
-      await startTimerIfNeeded();
+      const ok = await startTimerIfNeeded(false);
+      if (!ok) return;
       await continueAnyway();
     })().catch(() => {
       continueBtn.textContent = "Try again";

@@ -1,0 +1,86 @@
+:root {
+  --text: #1d1d25;
+  --muted: #666677;
+  --btn: #58609f;
+  --btn-text: #ffffff;
+  --border: #bcb9c9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 360px;
+  font-family: "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.popup-root {
+  padding: 14px 16px 16px;
+}
+
+.popup-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.popup-summary {
+  margin: 0 0 12px;
+  line-height: 1.4;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.popup-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.popup-textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  resize: vertical;
+  min-height: 72px;
+}
+
+.popup-primary {
+  margin-top: 10px;
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: var(--btn);
+  color: var(--btn-text);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.popup-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.popup-reply {
+  margin: 12px 0 0;
+  min-height: 20px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #2a2b3d;
+}
+
+.popup-foot {
+  margin: 12px 0 0;
+  line-height: 1.35;
+}

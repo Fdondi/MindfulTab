@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MindfulTab</title>
     <link rel="stylesheet" href="../shared/timer-wheel.css" />
+    <link rel="stylesheet" href="../shared/intent-feedback.css" />
     <link rel="stylesheet" href="./newtab.css" />
     <link rel="stylesheet" href="../../fidget-app/cube.css" />
   </head>
@@ -13,8 +14,11 @@
       <section id="timer-view" class="card">
         <div class="timer-controls">
           <div class="top-actions">
+            <button id="newtab-google-auth-btn" type="button" class="open-settings-btn">Sign in with Google</button>
+            <button id="open-ai-settings-btn" type="button" class="open-settings-btn">AI settings</button>
             <button id="open-settings-btn" type="button" class="open-settings-btn">Karma settings</button>
             <button id="open-logs-btn" type="button" class="open-settings-btn">See logs</button>
+            <span id="ext-version" class="ext-version" aria-label="Extension version"></span>
           </div>
           <h1 id="title-text" class="title">How long do you want<br />to use your browser?</h1>
           <p id="last-session-summary" class="last-session-summary hidden"></p>
@@ -34,6 +38,28 @@
             maxlength="160"
             placeholder="Why are you opening tabs? (optional)"
           />
+
+          <div id="ai-intent-panel" class="ai-intent-panel hidden" role="region" aria-label="AI intent feedback" aria-live="polite">
+            <p id="ai-intent-message" class="ai-intent-message"></p>
+            <div id="ai-intent-reply-block" class="ai-intent-reply-block">
+              <label id="ai-intent-reply-label" class="ai-intent-reply-label" for="ai-intent-reply-input">Your reply</label>
+              <input
+                id="ai-intent-reply-input"
+                class="ai-intent-reply-input"
+                type="text"
+                maxlength="160"
+                placeholder="Respond or revise your intent…"
+                autocomplete="off"
+              />
+            </div>
+            <div id="ai-intent-confirm-actions" class="ai-intent-confirm-actions hidden">
+              <button type="button" id="ai-intent-proceed" class="ai-intent-btn secondary">Start anyway</button>
+              <button type="button" id="ai-intent-dismiss" class="ai-intent-btn">Change duration or reason</button>
+            </div>
+            <div id="ai-intent-notice-actions" class="ai-intent-notice-actions hidden">
+              <button type="button" id="ai-intent-notice-dismiss" class="ai-intent-btn">Dismiss</button>
+            </div>
+          </div>
 
           <button id="start-btn" class="start-btn" type="button">Start</button>
 
@@ -56,6 +82,8 @@
 </main>
 
     <script src="../shared/storage.js"></script>
+    <script src="../shared/google-oauth.js"></script>
+    <script src="../shared/intent-feedback-ui.js"></script>
     <script src="../shared/karma.js"></script>
     <script src="../shared/timer-wheel.js"></script>
     <script src="../search/embeddings.js"></script>

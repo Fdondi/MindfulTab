@@ -23,7 +23,17 @@ const DEFAULT_SETTINGS = {
   hideThresholds: {
     warning: -5,
     hidden: -15
-  }
+  },
+  /** Same default base URL as MindfulHome BackendClient. */
+  aiBackendBaseUrl: "https://my-gemini-backend-834588824353.europe-west1.run.app",
+  /** App token from POST /api/auth/exchange (not the Google ID token). */
+  aiBackendToken: "",
+  /** Epoch ms when aiBackendToken expires (from exchange response). */
+  aiBackendTokenExpiresAtMs: 0,
+  /** Email from Google ID token at sign-in (display only). */
+  aiGoogleEmail: "",
+  /** When true, non-empty reasons are checked via /api/generate before starting a timer (requires sign-in). */
+  aiIntentValidationEnabled: false
 };
 
 async function getStorageValues(keys) {

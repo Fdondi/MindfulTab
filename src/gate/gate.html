@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MindfulTab Reflection</title>
     <link rel="stylesheet" href="../shared/timer-wheel.css" />
+    <link rel="stylesheet" href="../shared/intent-feedback.css" />
     <style>
       :root {
         --bg: #f1eff4;
@@ -12,6 +13,10 @@
         --muted: #666677;
         --btn: #58609f;
         --btn-text: #ffffff;
+        --accent-soft: #c9cbe9;
+        --card: #f4f2f8;
+        --accent-strong: #58609f;
+        --input-border: #8c8ba0;
       }
 
       * {
@@ -41,7 +46,7 @@
         font-size: 28px;
       }
 
-      p {
+      .intro {
         margin: 0 0 14px;
         color: var(--muted);
       }
@@ -56,7 +61,7 @@
         font-weight: 700;
       }
 
-      textarea {
+      #reflection-input {
         width: 100%;
         min-height: 90px;
         border: 1px solid #8c8ba0;
@@ -95,7 +100,7 @@
         justify-content: flex-end;
       }
 
-      button {
+      #continue-btn {
         border: 0;
         border-radius: 10px;
         background: var(--btn);
@@ -105,15 +110,37 @@
         padding: 12px 16px;
         cursor: pointer;
       }
-
     </style>
   </head>
   <body>
     <main class="panel">
       <h1>Pause for a breath</h1>
-      <p>This domain has low karma right now. You can continue anyway after a quick reflection.</p>
+      <p class="intro">This domain has low karma right now. You can continue anyway after a quick reflection.</p>
       <div id="domain-pill" class="pill"></div>
       <textarea id="reflection-input" maxlength="240" placeholder="What are you trying to do right now? (optional)"></textarea>
+
+      <div id="ai-intent-panel" class="ai-intent-panel hidden" role="region" aria-label="AI intent feedback" aria-live="polite">
+        <p id="ai-intent-message" class="ai-intent-message"></p>
+        <div id="ai-intent-reply-block" class="ai-intent-reply-block">
+          <label id="ai-intent-reply-label" class="ai-intent-reply-label" for="ai-intent-reply-input">Your reply</label>
+          <input
+            id="ai-intent-reply-input"
+            class="ai-intent-reply-input"
+            type="text"
+            maxlength="160"
+            placeholder="Respond or revise your intent…"
+            autocomplete="off"
+          />
+        </div>
+        <div id="ai-intent-confirm-actions" class="ai-intent-confirm-actions hidden">
+          <button type="button" id="ai-intent-proceed" class="ai-intent-btn secondary">Start anyway</button>
+          <button type="button" id="ai-intent-dismiss" class="ai-intent-btn">Change duration or reason</button>
+        </div>
+        <div id="ai-intent-notice-actions" class="ai-intent-notice-actions hidden">
+          <button type="button" id="ai-intent-notice-dismiss" class="ai-intent-btn">Dismiss</button>
+        </div>
+      </div>
+
       <section id="timer-required" class="timer-required hidden">
         <label for="timer-minutes-wheel">Set a timer to continue</label>
         <div class="timer-wheel-shell">
@@ -122,10 +149,11 @@
         </div>
       </section>
       <div class="actions">
-        <button id="continue-btn">Continue anyway</button>
+        <button id="continue-btn" type="button">Continue anyway</button>
       </div>
     </main>
     <script src="../shared/timer-wheel.js"></script>
+    <script src="../shared/intent-feedback-ui.js"></script>
     <script src="./gate.js"></script>
   </body>
 </html>

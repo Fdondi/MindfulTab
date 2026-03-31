@@ -10,7 +10,8 @@
     "notifications",
     "history",
     "bookmarks",
-    "scripting"
+    "scripting",
+    "identity"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -20,6 +21,8 @@
     "scripts": [
       "src/shared/storage.js",
       "src/shared/karma.js",
+      "src/shared/ai-backend.js",
+      "src/shared/google-oauth.js",
       "src/background.js"
     ]
   },
@@ -37,6 +40,7 @@
     }
   },
   "action": {
-    "default_title": "MindfulTab"
+    "default_title": "MindfulTab",
+    "default_popup": "src/popup/popup.html"
   }
 }

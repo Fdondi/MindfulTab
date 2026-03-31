@@ -1,10 +1,19 @@
 const EXT_API = typeof browser !== "undefined" ? browser : chrome;
+const OAUTH = self.MINDFULTAB_GOOGLE_OAUTH;
 
 const ui = {
   tabKarma: document.getElementById("tab-karma"),
+  tabAi: document.getElementById("tab-ai"),
   tabLogs: document.getElementById("tab-logs"),
   karmaPanel: document.getElementById("karma-panel"),
+  aiPanel: document.getElementById("ai-panel"),
   logsPanel: document.getElementById("logs-panel"),
+  aiAccountStatus: document.getElementById("ai-account-status"),
+  aiGoogleAuthBtn: document.getElementById("ai-google-auth-btn"),
+  aiRedirectPreview: document.getElementById("ai-redirect-uri-preview"),
+  aiBaseUrl: document.getElementById("ai-base-url"),
+  aiValidate: document.getElementById("ai-validate-intents"),
+  aiSaveBtn: document.getElementById("ai-save-btn"),
   refreshBtn: document.getElementById("refresh-btn"),
   refreshInteractionsBtn: document.getElementById("refresh-interactions-btn"),
   clearInteractionsBtn: document.getElementById("clear-interactions-btn"),
@@ -32,13 +41,16 @@ async function logInteraction(eventType, details = {}) {
 }
 
 function setActiveTab(tabName) {
-  const isLogs = tabName === "logs";
-  ui.tabKarma.classList.toggle("active", !isLogs);
-  ui.tabKarma.setAttribute("aria-selected", isLogs ? "false" : "true");
-  ui.tabLogs.classList.toggle("active", isLogs);
-  ui.tabLogs.setAttribute("aria-selected", isLogs ? "true" : "false");
-  ui.karmaPanel.classList.toggle("hidden", isLogs);
-  ui.logsPanel.classList.toggle("hidden", !isLogs);
+  const name = tabName === "logs" || tabName === "ai" || tabName === "karma" ? tabName : "karma";
+  ui.tabKarma.classList.toggle("active", name === "karma");
+  ui.tabKarma.setAttribute("aria-selected", name === "karma" ? "true" : "false");
+  ui.tabAi.classList.toggle("active", name === "ai");
+  ui.tabAi.setAttribute("aria-selected", name === "ai" ? "true" : "false");
+  ui.tabLogs.classList.toggle("active", name === "logs");
+  ui.tabLogs.setAttribute("aria-selected", name === "logs" ? "true" : "false");
+  ui.karmaPanel.classList.toggle("hidden", name !== "karma");
+  ui.aiPanel.classList.toggle("hidden", name !== "ai");
+  ui.logsPanel.classList.toggle("hidden", name !== "logs");
 }
 
 function rowTemplate(domain, score, visits, optedOut) {
@@ -153,6 +165,12 @@ function humanEventLine(item) {
       return `[${ts}] Opened settings`;
     case "newtab_open_logs_click":
       return `[${ts}] Opened logs`;
+    case "newtab_open_ai_settings_click":
+      return `[${ts}] Opened AI settings`;
+    case "newtab_google_sign_in_success":
+      return `[${ts}] Signed in with Google from new tab`;
+    case "newtab_google_sign_out_click":
+      return `[${ts}] Signed out from AI (new tab)`;
     case "settings_opened":
       return `[${ts}] Opened settings page`;
     case "settings_refresh_domains_click":
@@ -178,6 +196,16 @@ function humanEventLine(item) {
       return `[${ts}] Added Quick Launch item: ${details.url || "url"}`;
     case "newtab_quick_launch_remove":
       return `[${ts}] Removed Quick Launch item: ${details.url || "url"}`;
+    case "session_extended":
+      return `[${ts}] Timer extended by ${Math.max(1, Number(details.extraMinutes || 0))} min${details.domain ? ` (${details.domain})` : ""}`;
+    case "ai_time_extension_granted":
+      return `[${ts}] AI granted ${Math.max(1, Number(details.minutes || 0))} extra min${details.domain ? ` (${details.domain})` : ""}`;
+    case "settings_ai_saved":
+      return `[${ts}] AI settings saved${details.validateIntents ? " (intent validation on)" : ""}`;
+    case "google_sign_in_completed":
+      return `[${ts}] Signed in with Google for AI backend`;
+    case "google_sign_out":
+      return `[${ts}] Signed out from AI backend`;
     default:
       return `[${ts}] ${eventType}`;
   }
@@ -307,6 +335,91 @@ async function handleForgiveAll() {
   }
 }
 
+function renderAiAccountLine(settings) {
+  if (!ui.aiAccountStatus) return;
+  const email = String(settings?.aiGoogleEmail || "").trim();
+  const usable = OAUTH && OAUTH.mindfultabAiAuthUsable(settings);
+  const exp = Number(settings?.aiBackendTokenExpiresAtMs || 0);
+  if (usable && email) {
+    const expHint = exp > 0 && Number.isFinite(exp) ? ` — session until ${new Date(exp).toLocaleString()}` : "";
+    ui.aiAccountStatus.textContent = `Signed in as ${email}${expHint}.`;
+    return;
+  }
+  if (usable) {
+    ui.aiAccountStatus.textContent = "Signed in (backend session active).";
+    return;
+  }
+  ui.aiAccountStatus.textContent = "Not signed in. Use the button below to enable AI features.";
+}
+
+function renderAiGoogleAuthButton(settings) {
+  if (!ui.aiGoogleAuthBtn || !OAUTH) return;
+  const signedIn = OAUTH.mindfultabAiAuthUsable(settings);
+  ui.aiGoogleAuthBtn.textContent = signedIn ? "Sign out" : "Sign in with Google";
+  ui.aiGoogleAuthBtn.classList.toggle("primary", !signedIn);
+  ui.aiGoogleAuthBtn.setAttribute(
+    "aria-label",
+    signedIn ? "Sign out from AI backend" : "Sign in with Google for AI features"
+  );
+}
+
+async function loadAiSettings() {
+  const response = await sendMessage("mindfultab/get-raw-settings");
+  if (!response?.ok) return;
+  const s = response.settings || {};
+  if (ui.aiBaseUrl) ui.aiBaseUrl.value = String(s.aiBackendBaseUrl || "");
+  if (ui.aiValidate) ui.aiValidate.checked = Boolean(s.aiIntentValidationEnabled);
+  renderAiAccountLine(s);
+  renderAiGoogleAuthButton(s);
+}
+
+async function handleSaveAiSettings() {
+  if (!ui.aiSaveBtn) return;
+  ui.aiSaveBtn.disabled = true;
+  try {
+    const patch = {
+      aiBackendBaseUrl: ui.aiBaseUrl?.value?.trim() || "",
+      aiIntentValidationEnabled: Boolean(ui.aiValidate?.checked)
+    };
+    const response = await sendMessage("mindfultab/patch-raw-settings", { patch });
+    if (response?.ok) {
+      setStatusMessage("AI settings saved.");
+      await logInteraction("settings_ai_saved", { validateIntents: patch.aiIntentValidationEnabled });
+      await loadAiSettings();
+    } else {
+      setStatusMessage(response?.error || "Could not save AI settings.");
+    }
+  } finally {
+    ui.aiSaveBtn.disabled = false;
+  }
+}
+
+async function handleGoogleAuthBtn() {
+  if (!OAUTH) {
+    setStatusMessage("Google OAuth helper failed to load. Reload the page.");
+    return;
+  }
+  const current = await sendMessage("mindfultab/get-raw-settings");
+  const s = current?.settings || {};
+  const signedIn = OAUTH.mindfultabAiAuthUsable(s);
+  ui.aiGoogleAuthBtn.disabled = true;
+  setStatusMessage("");
+  try {
+    if (signedIn) {
+      await OAUTH.mindfultabGoogleSignOut(sendMessage);
+      setStatusMessage("Signed out from AI backend.");
+    } else {
+      const out = await OAUTH.mindfultabCompleteGoogleSignIn(EXT_API, sendMessage);
+      setStatusMessage(out.email ? `Signed in as ${out.email}.` : "Signed in.");
+    }
+    await loadAiSettings();
+  } catch (err) {
+    setStatusMessage(String(err));
+  } finally {
+    ui.aiGoogleAuthBtn.disabled = false;
+  }
+}
+
 async function handleClearInteractions() {
   ui.clearInteractionsBtn.disabled = true;
   try {
@@ -321,11 +434,22 @@ async function handleClearInteractions() {
 
 function init() {
   logInteraction("settings_opened", {}).catch(() => {});
-  const wantsLogs = window.location.hash === "#interaction-review";
-  setActiveTab(wantsLogs ? "logs" : "karma");
+  const hash = window.location.hash;
+  const wantsLogs = hash === "#interaction-review";
+  const wantsAi = hash === "#ai";
+  const initialTab = wantsAi ? "ai" : wantsLogs ? "logs" : "karma";
+  setActiveTab(initialTab);
+  if (initialTab === "ai") {
+    loadAiSettings().catch(() => {});
+  }
   ui.tabKarma.addEventListener("click", () => {
     setActiveTab("karma");
     history.replaceState(null, "", "#karma");
+  });
+  ui.tabAi.addEventListener("click", () => {
+    setActiveTab("ai");
+    history.replaceState(null, "", "#ai");
+    loadAiSettings().catch(() => {});
   });
   ui.tabLogs.addEventListener("click", () => {
     setActiveTab("logs");
@@ -347,6 +471,15 @@ function init() {
   ui.forgiveAllBtn.addEventListener("click", () => {
     handleForgiveAll().catch(() => {});
   });
+  ui.aiSaveBtn?.addEventListener("click", () => {
+    handleSaveAiSettings().catch(() => {});
+  });
+  ui.aiGoogleAuthBtn?.addEventListener("click", () => {
+    handleGoogleAuthBtn().catch(() => {});
+  });
+  if (ui.aiRedirectPreview && EXT_API.identity?.getRedirectURL) {
+    ui.aiRedirectPreview.textContent = EXT_API.identity.getRedirectURL();
+  }
   ui.domainList.addEventListener("click", (event) => {
     handleListClick(event.target).catch(() => {});
   });

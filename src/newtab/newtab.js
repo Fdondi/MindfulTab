@@ -23,6 +23,7 @@ const state = {
   gateScore: 0
 };
 const QUICK_LAUNCH_SURFACE_REASON = "Explicit selection required to avoid accidental auto-navigation while typing.";
+const OAUTH = self.MINDFULTAB_GOOGLE_OAUTH;
 
 const ui = {
   titleText: document.getElementById("title-text"),
@@ -34,8 +35,35 @@ const ui = {
   statusText: document.getElementById("status-text"),
   quickLaunchList: document.getElementById("quick-launch-list"),
   openSettingsBtn: document.getElementById("open-settings-btn"),
-  openLogsBtn: document.getElementById("open-logs-btn")
+  openAiSettingsBtn: document.getElementById("open-ai-settings-btn"),
+  newtabGoogleAuthBtn: document.getElementById("newtab-google-auth-btn"),
+  openLogsBtn: document.getElementById("open-logs-btn"),
+  extVersion: document.getElementById("ext-version"),
+  aiIntentPanel: document.getElementById("ai-intent-panel"),
+  aiIntentMessage: document.getElementById("ai-intent-message"),
+  aiIntentReplyBlock: document.getElementById("ai-intent-reply-block"),
+  aiIntentReplyLabel: document.getElementById("ai-intent-reply-label"),
+  aiIntentReplyInput: document.getElementById("ai-intent-reply-input"),
+  aiIntentConfirmActions: document.getElementById("ai-intent-confirm-actions"),
+  aiIntentProceed: document.getElementById("ai-intent-proceed"),
+  aiIntentDismiss: document.getElementById("ai-intent-dismiss"),
+  aiIntentNoticeActions: document.getElementById("ai-intent-notice-actions"),
+  aiIntentNoticeDismiss: document.getElementById("ai-intent-notice-dismiss")
 };
+
+const intentFeedback = self.MINDFULTAB_INTENT_FEEDBACK.createMindfulTabIntentFeedback({
+  getMainReason: () => (ui.reasonInput?.value || "").trim()
+});
+
+function renderExtensionVersion() {
+  if (!ui.extVersion) return;
+  try {
+    const version = self.EXT_API?.runtime?.getManifest?.()?.version;
+    ui.extVersion.textContent = version ? `MindfulTab v${version}` : "";
+  } catch (_) {
+    ui.extVersion.textContent = "";
+  }
+}
 
 function getNewtabParams() {
   const params = new URLSearchParams(window.location.search);
@@ -158,6 +186,17 @@ async function traceDecision(name, details = {}) {
   await logInteraction(`trace_decision_${name}`, details);
 }
 
+function renderNewtabGoogleAuthButton() {
+  if (!ui.newtabGoogleAuthBtn || !OAUTH) return;
+  const signedIn = OAUTH.mindfultabAiAuthUsable(state.settings);
+  ui.newtabGoogleAuthBtn.textContent = signedIn ? "Sign out" : "Sign in with Google";
+  ui.newtabGoogleAuthBtn.classList.toggle("newtab-google-auth-primary", !signedIn);
+  ui.newtabGoogleAuthBtn.setAttribute(
+    "aria-label",
+    signedIn ? "Sign out from AI backend" : "Sign in with Google for AI features"
+  );
+}
+
 async function refreshState() {
   let response;
   try {
@@ -169,47 +208,16 @@ async function refreshState() {
   state.activeSession = response.session || null;
   state.settings = { ...DEFAULTS, ...(response.settings || {}) };
   renderStatus();
+  renderNewtabGoogleAuthButton();
 }
 
-async function handleStartClick() {
-  const reason = (ui.reasonInput.value || "").trim();
-  await traceBoundary("start_click", {
-    isGateMode: state.isGateMode,
-    selectedMinutes: state.selectedMinutes,
-    hasReason: Boolean(reason),
-    target: state.pendingTargetUrl || ""
-  });
-  if (state.isGateMode && !reason) {
-    await traceDecision("reject_start_reason_required", { isGateMode: true });
-    ui.statusText.textContent = "Please add a reason before continuing.";
-    return;
-  }
-
-  let response;
-  try {
-    response = await sendMessage("mindfultab/start-timer", {
-      durationMinutes: state.selectedMinutes,
-      reason,
-      tabUrl: state.pendingTargetUrl || ""
-    });
-  } catch (err) {
-    await traceDecision("start_timer_message_error", { error: String(err) });
-    ui.statusText.textContent = "Service worker not ready. Reload this tab and try again.";
-    return;
-  }
-
-  if (!response?.ok) {
-    await traceDecision("start_timer_response_not_ok", { responseError: String(response?.error || "") });
-    ui.statusText.textContent = "Could not start timer. Try again.";
-    return;
-  }
+async function finalizeSuccessfulTimerStart(reason) {
   await traceDecision("start_timer_success", {
     selectedMinutes: state.selectedMinutes,
     hasReason: Boolean(reason),
     target: state.pendingTargetUrl || ""
   });
 
-  state.activeSession = response.session;
   renderStatus();
   document.activeElement?.blur();
 
@@ -225,7 +233,7 @@ async function handleStartClick() {
       if (!continueResp?.ok) throw new Error(continueResp?.error || "Continue failed");
     } catch (_) {
       await traceDecision("continue_anyway_resume_failed", {});
-      ui.statusText.textContent = "Could not continue after timer. Try again.";
+      intentFeedback.showNotice("Could not continue after timer. Try again.");
       return;
     }
     await traceDecision("continue_anyway_resume_success", {
@@ -238,6 +246,46 @@ async function handleStartClick() {
   if (state.pendingTargetUrl) {
     window.location.href = state.pendingTargetUrl;
   }
+}
+
+async function requestStartTimer(reason, confirmedLongSession) {
+  return sendMessage("mindfultab/start-timer", {
+    durationMinutes: state.selectedMinutes,
+    reason,
+    tabUrl: state.pendingTargetUrl || "",
+    confirmedLongSession: Boolean(confirmedLongSession)
+  });
+}
+
+async function handleStartClick(confirmedLongSession = false) {
+  const reason = intentFeedback.getEffectiveReason();
+  await traceBoundary("start_click", {
+    isGateMode: state.isGateMode,
+    selectedMinutes: state.selectedMinutes,
+    hasReason: Boolean(reason),
+    target: state.pendingTargetUrl || "",
+    confirmedLongSession: Boolean(confirmedLongSession)
+  });
+  if (state.isGateMode && !reason) {
+    await traceDecision("reject_start_reason_required", { isGateMode: true });
+    intentFeedback.showNotice("Please add a reason before continuing.");
+    return;
+  }
+
+  let response;
+  try {
+    response = await requestStartTimer(reason, confirmedLongSession);
+  } catch (err) {
+    await traceDecision("start_timer_message_error", { error: String(err) });
+    intentFeedback.showNotice("Service worker not ready. Reload this tab and try again.");
+    return;
+  }
+
+  const result = await intentFeedback.handleStartTimerResponse(response, { traceDecision });
+  if (!result.ok) return;
+
+  state.activeSession = result.session;
+  await finalizeSuccessfulTimerStart(reason);
 }
 
 const QUICK_LAUNCH_FOLDER = "Quick Launch";
@@ -438,9 +486,20 @@ async function loadQuickLaunch() {
 
 function bindEvents() {
   ui.startBtn.addEventListener("click", () => {
-    handleStartClick().catch(() => {
-      ui.statusText.textContent = "Could not start timer. Try again.";
+    handleStartClick(false).catch(() => {
+      intentFeedback.showNotice("Could not start timer. Try again.");
     });
+  });
+  ui.aiIntentProceed?.addEventListener("click", () => {
+    handleStartClick(true).catch(() => {
+      intentFeedback.showNotice("Could not start timer. Try again.");
+    });
+  });
+  ui.aiIntentDismiss?.addEventListener("click", () => {
+    intentFeedback.hide();
+  });
+  ui.aiIntentNoticeDismiss?.addEventListener("click", () => {
+    intentFeedback.hide();
   });
   ui.openSettingsBtn?.addEventListener("click", async () => {
     await logInteraction("newtab_open_settings_click", {});
@@ -452,6 +511,34 @@ function bindEvents() {
       }
     } catch (_) {
       window.location.href = self.EXT_API.runtime.getURL("src/settings/settings.html");
+    }
+  });
+  ui.openAiSettingsBtn?.addEventListener("click", async () => {
+    await logInteraction("newtab_open_ai_settings_click", {});
+    window.location.href = `${self.EXT_API.runtime.getURL("src/settings/settings.html")}#ai`;
+  });
+  ui.newtabGoogleAuthBtn?.addEventListener("click", async () => {
+    if (!OAUTH) {
+      intentFeedback.showNotice("AI sign-in is not available. Reload the page.");
+      return;
+    }
+    const signedIn = OAUTH.mindfultabAiAuthUsable(state.settings);
+    ui.newtabGoogleAuthBtn.disabled = true;
+    try {
+      if (signedIn) {
+        await OAUTH.mindfultabGoogleSignOut(sendMessage);
+        await logInteraction("newtab_google_sign_out_click", {});
+        intentFeedback.showNotice("Signed out from AI.");
+      } else {
+        const out = await OAUTH.mindfultabCompleteGoogleSignIn(self.EXT_API, sendMessage);
+        await logInteraction("newtab_google_sign_in_success", { hasEmail: Boolean(out?.email) });
+        intentFeedback.showNotice(out?.email ? `Signed in as ${out.email}.` : "Signed in.");
+      }
+      await refreshState();
+    } catch (err) {
+      intentFeedback.showNotice(String(err));
+    } finally {
+      ui.newtabGoogleAuthBtn.disabled = false;
     }
   });
   ui.openLogsBtn?.addEventListener("click", async () => {
@@ -491,6 +578,7 @@ function startTicking() {
 }
 
 async function init() {
+  renderExtensionVersion();
   await logInteraction("newtab_opened", {});
   const newtabParams = getNewtabParams();
   await traceBoundary("newtab_params_received", {

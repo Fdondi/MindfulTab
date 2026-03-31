@@ -1,5 +1,5 @@
 if (typeof importScripts === "function") {
-  importScripts("shared/storage.js", "shared/karma.js");
+  importScripts("shared/storage.js", "shared/karma.js", "shared/ai-backend.js", "shared/google-oauth.js");
 }
 
 const BADGE_ALARM_NAME = "mindfultab-badge-tick";
@@ -305,6 +305,52 @@ async function getVisitedLinksByMode(mode) {
     return all.filter((item) => String(item.source || "").includes("browser"));
   }
   return all;
+}
+
+function isAutoBypassTimerReason(reason) {
+  const r = String(reason || "");
+  return r === AUTO_BYPASS_TIMER_REASON || r.includes("Auto-started after bypassing");
+}
+
+function hasUsableBackendAppToken(settings) {
+  const fn = self.MINDFULTAB_GOOGLE_OAUTH?.mindfultabAiAuthUsable;
+  return typeof fn === "function" ? fn(settings) : false;
+}
+
+async function clearBackendAuthInSettings() {
+  const current = await getSettings();
+  const next = {
+    ...current,
+    aiBackendToken: "",
+    aiBackendTokenExpiresAtMs: 0,
+    aiGoogleEmail: ""
+  };
+  await setStorageValues({ [STORAGE_KEYS.SETTINGS]: next });
+}
+
+async function extendActiveSessionMinutes(tabId, extraMinutes) {
+  const session = await getTabSession(tabId);
+  if (!session || session.ended) return { ok: false, error: "No active timer for this tab." };
+  const add = Math.max(1, Math.min(120, Math.round(Number(extraMinutes) || 0)));
+  const addMs = add * 60 * 1000;
+  const next = { ...session, endsAt: session.endsAt + addMs };
+  await setTabSession(tabId, next);
+  await scheduleTimerAlarm(tabId, next.endsAt);
+  startBadgeTick();
+  await updateBadge(tabId);
+  await appendHistory({
+    type: "session_extended",
+    atIso: nowIso(),
+    tabId,
+    extraMinutes: add,
+    session: next
+  });
+  await logInteraction("session_extended", {
+    tabId,
+    extraMinutes: add,
+    domain: next.domain || ""
+  });
+  return { ok: true, session: next };
 }
 
 async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
@@ -749,16 +795,70 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "mindfultab/start-timer") {
       try {
         const tabUrl = message.payload?.tabUrl || sender?.tab?.url || "";
+        const reason = message.payload?.reason || "";
+        const durationMinutes = message.payload?.durationMinutes;
+        const confirmedLongSession = Boolean(message.payload?.confirmedLongSession);
         await traceBoundary("start_timer_request", {
           senderTabId: Number.isInteger(senderTabId) ? senderTabId : null,
-          durationMinutes: Number(message.payload?.durationMinutes || 0),
-          hasReason: Boolean(String(message.payload?.reason || "").trim()),
-          tabUrl: cleanUrlForLog(tabUrl)
+          durationMinutes: Number(durationMinutes || 0),
+          hasReason: Boolean(String(reason || "").trim()),
+          tabUrl: cleanUrlForLog(tabUrl),
+          confirmedLongSession
         }, sender);
         timerPendingTabs.delete(senderTabId);
+        const settings = await getSettings();
+        const ai = self.MINDFULTAB_AI;
+        if (
+          ai &&
+          ai.shouldValidateIntent &&
+          ai.shouldValidateIntent(settings, reason, isAutoBypassTimerReason)
+        ) {
+          if (!hasUsableBackendAppToken(settings)) {
+            await traceDecision("intent_validation_blocked_not_signed_in", {}, sender);
+            sendResponse({
+              ok: false,
+              code: "need_google_sign_in",
+              error:
+                "AI intent check requires a signed-in Google session. Open MindfulTab settings, AI tab, and use Sign in with Google."
+            });
+            return;
+          }
+          let decision;
+          try {
+            decision = await ai.validateIntent({
+              settings,
+              durationMinutes,
+              reason,
+              confirmedLongSession
+            });
+          } catch (err) {
+            if (err && err.httpStatus === 401) {
+              await clearBackendAuthInSettings();
+              await traceDecision("intent_validation_auth_expired", {}, sender);
+              sendResponse({
+                ok: false,
+                code: "need_google_sign_in",
+                error: "Your AI session expired. Open MindfulTab settings → AI and sign in with Google again."
+              });
+              return;
+            }
+            throw err;
+          }
+          if (decision.type === "reject") {
+            await traceDecision("intent_rejected_by_ai", { message: decision.message }, sender);
+            sendResponse({ ok: false, aiRejected: true, message: decision.message });
+            return;
+          }
+          if (decision.type === "confirm") {
+            await traceDecision("intent_needs_confirmation", { message: decision.message }, sender);
+            sendResponse({ ok: false, needsConfirmation: true, message: decision.message });
+            return;
+          }
+        }
+
         const session = await startTimer({
-          durationMinutes: message.payload?.durationMinutes,
-          reason: message.payload?.reason,
+          durationMinutes,
+          reason,
           tabUrl,
           tabId: senderTabId
         });
@@ -770,10 +870,154 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return;
     }
 
+    if (message?.type === "mindfultab/request-time-extension") {
+      try {
+        const settings = await getSettings();
+        if (!hasUsableBackendAppToken(settings)) {
+          sendResponse({
+            ok: false,
+            code: "need_google_sign_in",
+            error: "Sign in with Google under MindfulTab settings → AI to request more time."
+          });
+          return;
+        }
+        let tabId = message.payload?.tabId;
+        if (!Number.isInteger(tabId)) {
+          const tabs = await EXT_API.tabs.query({ active: true, lastFocusedWindow: true });
+          tabId = tabs?.[0]?.id;
+        }
+        if (!Number.isInteger(tabId)) {
+          sendResponse({ ok: false, error: "Could not determine the active tab." });
+          return;
+        }
+        await finishTimerIfNeeded(tabId);
+        const session = await getTabSession(tabId);
+        if (!session || session.ended) {
+          sendResponse({ ok: false, error: "No active timer on this tab." });
+          return;
+        }
+        const userMessage = String(message.payload?.userMessage || "").trim();
+        if (!userMessage) {
+          sendResponse({ ok: false, error: "Message is required." });
+          return;
+        }
+        let minutes;
+        let reply;
+        try {
+          const result = await self.MINDFULTAB_AI.requestTimeExtension({
+            settings,
+            session,
+            userMessage
+          });
+          minutes = result.minutes;
+          reply = result.reply;
+        } catch (err) {
+          if (err && err.httpStatus === 401) {
+            await clearBackendAuthInSettings();
+            sendResponse({
+              ok: false,
+              code: "need_google_sign_in",
+              error: "Your AI session expired. Sign in again under settings → AI."
+            });
+            return;
+          }
+          throw err;
+        }
+        if (minutes == null) {
+          sendResponse({
+            ok: true,
+            granted: false,
+            reply: reply || "No extra time was granted."
+          });
+          return;
+        }
+        const ext = await extendActiveSessionMinutes(tabId, minutes);
+        if (!ext.ok) {
+          sendResponse({ ok: false, error: ext.error || "Could not extend session." });
+          return;
+        }
+        await logInteraction("ai_time_extension_granted", { tabId, minutes, domain: session.domain || "" });
+        sendResponse({
+          ok: true,
+          granted: true,
+          minutes,
+          session: ext.session,
+          reply: reply || `Granted ${minutes} more minutes.`
+        });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err) });
+      }
+      return;
+    }
+
+    if (message?.type === "mindfultab/get-raw-settings") {
+      const settings = await getSettings();
+      sendResponse({ ok: true, settings });
+      return;
+    }
+
+    if (message?.type === "mindfultab/exchange-google-id-token") {
+      try {
+        const idToken = String(message.payload?.idToken || "").trim();
+        if (!idToken) {
+          sendResponse({ ok: false, error: "Missing Google ID token." });
+          return;
+        }
+        const settings = await getSettings();
+        const baseUrl = settings.aiBackendBaseUrl || self.MINDFULTAB_AI.DEFAULT_AI_BACKEND_BASE_URL;
+        const { token, expiresAtMs } = await self.MINDFULTAB_AI.exchangeGoogleIdTokenForAppToken(baseUrl, idToken);
+        let email = "";
+        try {
+          const payload = self.MINDFULTAB_GOOGLE_OAUTH.decodeJwtPayload(idToken);
+          email = String(payload.email || payload.sub || "").trim();
+        } catch (_) {}
+        const next = {
+          ...settings,
+          aiBackendToken: token,
+          aiBackendTokenExpiresAtMs: expiresAtMs,
+          aiGoogleEmail: email
+        };
+        await setStorageValues({ [STORAGE_KEYS.SETTINGS]: next });
+        await logInteraction("google_sign_in_completed", { hasEmail: Boolean(email) });
+        sendResponse({ ok: true, email });
+      } catch (err) {
+        sendResponse({ ok: false, error: String(err) });
+      }
+      return;
+    }
+
+    if (message?.type === "mindfultab/google-sign-out") {
+      await clearBackendAuthInSettings();
+      await logInteraction("google_sign_out", {});
+      sendResponse({ ok: true, settings: await getSettings() });
+      return;
+    }
+
+    if (message?.type === "mindfultab/patch-raw-settings") {
+      const patch = message.payload?.patch && typeof message.payload.patch === "object" ? message.payload.patch : {};
+      const allowedKeys = ["aiBackendBaseUrl", "aiIntentValidationEnabled"];
+      const current = await getSettings();
+      const next = { ...current };
+      for (const key of allowedKeys) {
+        if (Object.prototype.hasOwnProperty.call(patch, key)) {
+          if (key === "aiIntentValidationEnabled") {
+            next[key] = Boolean(patch[key]);
+          } else {
+            next[key] = String(patch[key] ?? "");
+          }
+        }
+      }
+      await setStorageValues({ [STORAGE_KEYS.SETTINGS]: next });
+      sendResponse({ ok: true, settings: next });
+      return;
+    }
+
     if (message?.type === "mindfultab/get-state") {
       await recoverUnderwaterKarmaCatchUp();
-      if (senderTabId != null) await finishTimerIfNeeded(senderTabId);
-      const session = senderTabId != null ? await getTabSession(senderTabId) : null;
+      const explicitTab = message.payload?.forTabId;
+      const targetTabId = Number.isInteger(explicitTab) ? explicitTab : senderTabId;
+      if (targetTabId != null) await finishTimerIfNeeded(targetTabId);
+      const session = targetTabId != null ? await getTabSession(targetTabId) : null;
       const [karmaByDomain, domainVisits, settings] = await Promise.all([
         getKarmaByDomain(),
         getDomainVisits(),

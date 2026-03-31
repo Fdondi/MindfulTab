@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MindfulTab</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <main class="popup-root">
+      <h1 class="popup-title">Timer</h1>
+      <p id="popup-session-summary" class="popup-summary muted">Loading…</p>
+      <label class="popup-label" for="popup-extension-message">Message to AI</label>
+      <textarea
+        id="popup-extension-message"
+        class="popup-textarea"
+        maxlength="500"
+        rows="4"
+        placeholder="Explain why you need more time on this tab…"
+      ></textarea>
+      <button id="popup-send-btn" type="button" class="popup-primary">Ask for more time</button>
+      <p id="popup-reply" class="popup-reply" aria-live="polite"></p>
+      <p class="popup-foot muted">
+        Uses the same Google-backed session as MindfulHome (settings → AI). The model may decline.
+      </p>
+    </main>
+    <script src="./popup.js"></script>
+  </body>
+</html>

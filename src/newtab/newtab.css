@@ -57,9 +57,28 @@ body {
   right: 12px;
   z-index: 20;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
   margin: 0;
+  max-width: min(560px, 96vw);
+}
+
+.top-actions .ext-version {
+  align-self: center;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  user-select: text;
+}
+
+.top-actions .open-settings-btn.newtab-google-auth-primary {
+  background: var(--accent-strong);
+  color: #fff;
+  border-color: var(--accent-strong);
+  font-weight: 700;
 }
 
 .title {
