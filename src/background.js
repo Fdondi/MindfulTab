@@ -353,6 +353,41 @@ async function extendActiveSessionMinutes(tabId, extraMinutes) {
   return { ok: true, session: next };
 }
 
+/** After `ended` is set, resume with a fresh block of time from now (used when AI grants more time post-expiry). */
+async function resumeEndedSessionMinutes(tabId, extraMinutes) {
+  const session = await getTabSession(tabId);
+  if (!session || !session.ended) {
+    return { ok: false, error: "No ended timer session on this tab to resume." };
+  }
+  const add = Math.max(1, Math.min(120, Math.round(Number(extraMinutes) || 0)));
+  const addMs = add * 60 * 1000;
+  await clearBirdsAlarm(tabId);
+  await removeBirdsFromTab(tabId);
+  const next = {
+    ...session,
+    ended: false,
+    endsAt: Date.now() + addMs,
+    nudgedAt: null
+  };
+  await setTabSession(tabId, next);
+  await scheduleTimerAlarm(tabId, next.endsAt);
+  startBadgeTick();
+  await updateBadge(tabId);
+  await appendHistory({
+    type: "session_resumed_after_expiry",
+    atIso: nowIso(),
+    tabId,
+    extraMinutes: add,
+    session: next
+  });
+  await logInteraction("session_resumed_after_expiry", {
+    tabId,
+    extraMinutes: add,
+    domain: next.domain || ""
+  });
+  return { ok: true, session: next };
+}
+
 async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
   const startedAt = Date.now();
   const durationMs = Math.max(1, Number(durationMinutes)) * 60 * 1000;
@@ -542,6 +577,28 @@ async function resetSessionForNewTab(tabId) {
 async function injectBirds(tabId) {
   await EXT_API.scripting.insertCSS({ target: { tabId }, files: ["src/birds/birds.css"] });
   await EXT_API.scripting.executeScript({ target: { tabId }, files: ["src/birds/birds.js"] });
+}
+
+/** Remove bird overlay from the tab (DOM, intervals, injected CSS). Best-effort on restricted pages. */
+async function removeBirdsFromTab(tabId) {
+  if (!Number.isInteger(tabId)) return;
+  try {
+    await EXT_API.scripting.removeCSS({ target: { tabId }, files: ["src/birds/birds.css"] });
+  } catch (_) {
+    /* CSS may be absent or page may block scripting */
+  }
+  const runTeardown = () => {
+    if (typeof window.__mindfultabBirdsTeardown === "function") {
+      window.__mindfultabBirdsTeardown();
+    }
+  };
+  try {
+    await EXT_API.scripting.executeScript({ target: { tabId }, world: "MAIN", func: runTeardown });
+  } catch (_) {
+    try {
+      await EXT_API.scripting.executeScript({ target: { tabId }, func: runTeardown });
+    } catch (_) {}
+  }
 }
 
 EXT_API.alarms.onAlarm.addListener(async (alarm) => {
@@ -892,8 +949,8 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         await finishTimerIfNeeded(tabId);
         const session = await getTabSession(tabId);
-        if (!session || session.ended) {
-          sendResponse({ ok: false, error: "No active timer on this tab." });
+        if (!session) {
+          sendResponse({ ok: false, error: "No timer session on this tab." });
           return;
         }
         const userMessage = String(message.payload?.userMessage || "").trim();
@@ -931,12 +988,21 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           return;
         }
-        const ext = await extendActiveSessionMinutes(tabId, minutes);
+        // Timer may expire while the AI request runs; re-sync storage before extend vs resume.
+        await finishTimerIfNeeded(tabId);
+        const latest = await getTabSession(tabId);
+        if (!latest) {
+          sendResponse({ ok: false, error: "No timer session on this tab." });
+          return;
+        }
+        const ext = latest.ended
+          ? await resumeEndedSessionMinutes(tabId, minutes)
+          : await extendActiveSessionMinutes(tabId, minutes);
         if (!ext.ok) {
           sendResponse({ ok: false, error: ext.error || "Could not extend session." });
           return;
         }
-        await logInteraction("ai_time_extension_granted", { tabId, minutes, domain: session.domain || "" });
+        await logInteraction("ai_time_extension_granted", { tabId, minutes, domain: latest.domain || "" });
         sendResponse({
           ok: true,
           granted: true,

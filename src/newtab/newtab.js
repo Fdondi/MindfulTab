@@ -159,7 +159,8 @@ function renderStatus() {
       ui.lastSessionSummary.textContent = `Time's up. Your ${declaredMinutes}-min timer for "${intent}" just ended. What's next?`;
       ui.lastSessionSummary.classList.remove("hidden");
     }
-    ui.statusText.textContent = "Timer ended. Check in before continuing.";
+    ui.statusText.textContent =
+      "Timer ended. Check in before continuing. Use the extension toolbar popup to ask for more time (AI sign-in under settings).";
     return;
   }
 

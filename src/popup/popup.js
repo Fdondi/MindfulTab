@@ -37,13 +37,18 @@ async function refreshSummary() {
     return;
   }
   const session = resp.session;
-  if (!session || session.ended) {
-    summaryEl.textContent = "No active timer on this tab. Start one from the new tab page.";
+  if (!session) {
+    summaryEl.textContent = "No timer on this tab. Start one from the new tab page.";
     sendBtn.disabled = true;
     return;
   }
   const reason = String(session.reason || "").trim() || "(no intent text)";
   const domain = String(session.domain || "").trim() || "this tab";
+  if (session.ended) {
+    summaryEl.textContent = `Timer ended — ${domain}. Intent: ${reason}. Ask for more time below (MindfulTab settings → AI sign-in).`;
+    sendBtn.disabled = false;
+    return;
+  }
   summaryEl.textContent = `${formatRemaining(session.endsAt)} left on ${domain}. Intent: ${reason}`;
   sendBtn.disabled = false;
 }

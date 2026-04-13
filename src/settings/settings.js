@@ -198,6 +198,8 @@ function humanEventLine(item) {
       return `[${ts}] Removed Quick Launch item: ${details.url || "url"}`;
     case "session_extended":
       return `[${ts}] Timer extended by ${Math.max(1, Number(details.extraMinutes || 0))} min${details.domain ? ` (${details.domain})` : ""}`;
+    case "session_resumed_after_expiry":
+      return `[${ts}] Timer resumed after expiry (${Math.max(1, Number(details.extraMinutes || 0))} min)${details.domain ? ` — ${details.domain}` : ""}`;
     case "ai_time_extension_granted":
       return `[${ts}] AI granted ${Math.max(1, Number(details.minutes || 0))} extra min${details.domain ? ` (${details.domain})` : ""}`;
     case "settings_ai_saved":

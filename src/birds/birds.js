@@ -1,5 +1,7 @@
 (function () {
-  if (window.__mindfultab_birds) return;
+  if (window.__mindfultab_birds && typeof window.__mindfultabBirdsTeardown === "function") {
+    window.__mindfultabBirdsTeardown();
+  }
   window.__mindfultab_birds = true;
 
   const BIRD_SIZE = 64;
@@ -55,7 +57,10 @@
   }
 
   function tick(now) {
-    if (birds.length === 0) { ticking = false; return; }
+    if (birds.length === 0) {
+      ticking = false;
+      return;
+    }
 
     if (now - lastFrame >= FRAME_MS) {
       lastFrame = now;
@@ -80,6 +85,20 @@
     requestAnimationFrame(tick);
   }
 
+  const spawnIntervalId = setInterval(spawnBird, 20_000);
+
+  window.__mindfultabBirdsTeardown = function () {
+    clearInterval(spawnIntervalId);
+    ticking = false;
+    const snapshot = birds.splice(0, birds.length);
+    for (const b of snapshot) {
+      try {
+        b.el.remove();
+      } catch (_) {}
+    }
+    window.__mindfultab_birds = false;
+    delete window.__mindfultabBirdsTeardown;
+  };
+
   spawnBird();
-  setInterval(spawnBird, 20_000);
 })();

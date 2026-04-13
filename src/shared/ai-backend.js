@@ -301,14 +301,18 @@ function extensionRequestContents({ session, userMessage }) {
   const reason = String(session?.reason || "").trim() || "(none)";
   const domain = String(session?.domain || "").trim() || "(unknown)";
   const endsAt = Number(session?.endsAt || 0);
-  const remainingMin = endsAt > Date.now() ? Math.max(1, Math.ceil((endsAt - Date.now()) / 60000)) : 0;
+  const ended = Boolean(session?.ended);
+  const remainingMin = !ended && endsAt > Date.now() ? Math.max(1, Math.ceil((endsAt - Date.now()) / 60000)) : 0;
+  const timerLine = ended
+    ? "The timer has already ended. The user is asking to continue with more time."
+    : `About ${remainingMin} minutes left (approximate).`;
   const msg = JSON.stringify(String(userMessage || "").trim());
   const text = `You help with mindful browsing timers.
 
-Active timer:
+Session:
 - Domain context: ${domain}
 - Declared intent: ${JSON.stringify(reason)}
-- About ${remainingMin} minutes left (approximate).
+- ${timerLine}
 
 The user message (JSON string): ${msg}
 
