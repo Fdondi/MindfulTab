@@ -1,0 +1,32 @@
+#mindfultab-pause-bird-root {
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  left: 50% !important;
+  top: 38% !important;
+  transform: translate(-50%, -50%) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  gap: 10px !important;
+  pointer-events: none !important;
+  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif !important;
+}
+
+.mindfultab-pause-bubble {
+  background: #fff !important;
+  color: #1a1a2e !important;
+  font-weight: 800 !important;
+  font-size: 18px !important;
+  letter-spacing: 0.04em !important;
+  padding: 10px 18px !important;
+  border-radius: 14px !important;
+  border: 3px solid #58609f !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2) !important;
+  white-space: nowrap !important;
+}
+
+.mindfultab-pause-bird-svg {
+  width: 72px !important;
+  height: 72px !important;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25)) !important;
+}

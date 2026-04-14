@@ -12,6 +12,14 @@
   <body>
     <main class="screen">
       <section id="timer-view" class="card">
+        <div class="work-promise-area" aria-label="Work-only path for this tab">
+          <button id="work-promise-btn" class="work-promise-btn" type="button">
+            <span class="work-promise-icon" aria-hidden="true">&#10003;&#129310;</span>
+            <span class="work-promise-title">This is for work, I swear</span>
+            <span class="work-promise-subtitle">Pomodoro mode for this tab</span>
+          </button>
+          <p id="work-promise-feedback" class="work-promise-feedback" aria-live="polite"></p>
+        </div>
         <div class="timer-controls">
           <div class="top-actions">
             <button id="newtab-google-auth-btn" type="button" class="open-settings-btn">Sign in with Google</button>

@@ -137,6 +137,12 @@ function humanEventLine(item) {
       return `[${ts}] Timer started for ${Number(details.durationMinutes || 0)} min${details.intent ? ` ("${details.intent}")` : ""}${details.domain ? ` on ${details.domain}` : ""}`;
     case "session_ended":
       return `[${ts}] Timer ended${details.domain ? ` on ${details.domain}` : ""}${details.overrunPenaltyApplied ? " (karma penalty applied)" : ""}`;
+    case "pomodoro_break_started":
+      return `[${ts}] Pomodoro break started (5 min)${details.domain ? ` — ${details.domain}` : ""}`;
+    case "pomodoro_work_resumed":
+      return `[${ts}] Pomodoro focus block resumed${details.domain ? ` — ${details.domain}` : ""}`;
+    case "pomodoro_skip_break_popup":
+      return `[${ts}] Pomodoro break skipped via toolbar popup (tab #${Number(details.tabId || 0) || "?"})`;
     case "bird_phase_started":
       return `[${ts}] Bird phase started${details.domain ? ` on ${details.domain}` : ""} (raptor: #${Number(details.milestones?.raptorBird || 10)}, first penalty: #${Number(details.milestones?.firstPenaltyBird || 11)}, forced close: #${Number(details.milestones?.forcedCloseBird || 20)})`;
     case "bird_milestone":
@@ -188,6 +194,8 @@ function humanEventLine(item) {
       return `[${ts}] Enabled always allow for ${details.domain || "domain"}`;
     case "always_allow_disabled":
       return `[${ts}] Disabled always allow for ${details.domain || "domain"}`;
+    case "tab_gate_exempt_work_promise":
+      return `[${ts}] Work-promise: skip gate for tab #${Number(details.tabId || 0) || "?"}`;
     case "settings_clear_interactions_click":
       return `[${ts}] Cleared logs`;
     case "newtab_quick_launch_click":

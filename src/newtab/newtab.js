@@ -18,6 +18,8 @@ const state = {
   resumeContinueAnyway: false,
   continueDomain: "",
   timerWheel: null,
+  timerWheelMode: null,
+  pomodoroEnrolled: false,
   isGateMode: false,
   gateDomain: "",
   gateScore: 0
@@ -33,6 +35,8 @@ const ui = {
   reasonInput: document.getElementById("reason-input"),
   startBtn: document.getElementById("start-btn"),
   statusText: document.getElementById("status-text"),
+  workPromiseBtn: document.getElementById("work-promise-btn"),
+  workPromiseFeedback: document.getElementById("work-promise-feedback"),
   quickLaunchList: document.getElementById("quick-launch-list"),
   openSettingsBtn: document.getElementById("open-settings-btn"),
   openAiSettingsBtn: document.getElementById("open-ai-settings-btn"),
@@ -152,6 +156,15 @@ function renderStatus() {
   const msRemaining = state.activeSession.endsAt - Date.now();
   const isExpired = state.activeSession.ended || msRemaining <= 0;
 
+  if (!isExpired && state.activeSession.pomodoro?.phase === "break") {
+    ui.statusText.textContent = `Pomodoro break — ${formatDuration(msRemaining)} left (open the MindfulTab icon to skip)`;
+    return;
+  }
+  if (!isExpired && state.activeSession.pomodoro?.phase === "work") {
+    ui.statusText.textContent = `Focus — ${formatDuration(msRemaining)} left`;
+    return;
+  }
+
   if (isExpired) {
     const declaredMinutes = Math.max(1, Number(state.activeSession.durationMinutes || 1));
     const intent = (state.activeSession.reason || "").trim() || "No intent declared";
@@ -198,16 +211,53 @@ function renderNewtabGoogleAuthButton() {
   );
 }
 
+function syncTimerWheelToEnrollment() {
+  const wantPomodoro = state.pomodoroEnrolled;
+  const mode = wantPomodoro ? "pomodoro" : "default";
+  if (state.timerWheelMode === mode && state.timerWheel) return;
+  state.timerWheel?.destroy?.();
+  if (wantPomodoro) {
+    state.timerWheel = self.createTimerWheel({
+      wheelElement: ui.wheel,
+      minMinutes: 5,
+      maxMinutes: 120,
+      stepMinutes: 5,
+      initialMinutes: 25,
+      onChange: (minutes) => {
+        state.selectedMinutes = minutes;
+      }
+    });
+    state.timerWheelMode = "pomodoro";
+  } else {
+    state.timerWheel = self.createTimerWheel({
+      wheelElement: ui.wheel,
+      minMinutes: 1,
+      maxMinutes: 120,
+      initialMinutes: 1,
+      onChange: (minutes) => {
+        state.selectedMinutes = minutes;
+      }
+    });
+    state.timerWheelMode = "default";
+  }
+}
+
 async function refreshState() {
   let response;
   try {
     response = await sendMessage("mindfultab/get-state");
   } catch (_) {
+    syncTimerWheelToEnrollment();
     return;
   }
-  if (!response?.ok) return;
+  if (!response?.ok) {
+    syncTimerWheelToEnrollment();
+    return;
+  }
+  state.pomodoroEnrolled = Boolean(response.pomodoroEnrolled);
   state.activeSession = response.session || null;
   state.settings = { ...DEFAULTS, ...(response.settings || {}) };
+  syncTimerWheelToEnrollment();
   renderStatus();
   renderNewtabGoogleAuthButton();
 }
@@ -246,6 +296,43 @@ async function finalizeSuccessfulTimerStart(reason) {
 
   if (state.pendingTargetUrl) {
     window.location.href = state.pendingTargetUrl;
+  }
+}
+
+function setWorkPromiseFeedback(text, variant = "") {
+  const el = ui.workPromiseFeedback;
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.remove("work-promise-feedback--hint", "work-promise-feedback--error");
+  if (variant === "hint") el.classList.add("work-promise-feedback--hint");
+  if (variant === "error") el.classList.add("work-promise-feedback--error");
+}
+
+async function handleWorkPromiseClick() {
+  intentFeedback.hide();
+  setWorkPromiseFeedback("");
+  try {
+    const tabId = await getCurrentTabId();
+    if (tabId == null) {
+      throw new Error("No tab id");
+    }
+    await traceBoundary("gate_work_promise_click", {
+      domain: state.gateDomain,
+      target: state.pendingTargetUrl,
+      tabId
+    });
+    const exemptResp = await sendMessage("mindfultab/set-tab-gate-exempt", { tabId, pomodoro: true });
+    if (!exemptResp?.ok) {
+      throw new Error(exemptResp?.error || "Could not mark tab exempt");
+    }
+    state.pomodoroEnrolled = true;
+    syncTimerWheelToEnrollment();
+    setWorkPromiseFeedback(
+      "Pomodoro mode on. Pick focus time in 5-minute steps (5–120 min, default 25), then press Start — after each block you get a 5-minute break with one PAUSE! bird.",
+      "hint"
+    );
+  } catch (_) {
+    setWorkPromiseFeedback("Could not enable work / Pomodoro mode for this tab. Please try again.", "error");
   }
 }
 
@@ -502,6 +589,12 @@ function bindEvents() {
   ui.aiIntentNoticeDismiss?.addEventListener("click", () => {
     intentFeedback.hide();
   });
+  ui.workPromiseBtn?.addEventListener("click", () => {
+    handleWorkPromiseClick().catch(() => {
+      intentFeedback.showNotice("Could not continue. Try again.");
+      if (ui.workPromiseBtn) ui.workPromiseBtn.disabled = false;
+    });
+  });
   ui.openSettingsBtn?.addEventListener("click", async () => {
     await logInteraction("newtab_open_settings_click", {});
     try {
@@ -597,15 +690,6 @@ async function init() {
   state.resumeContinueAnyway = Boolean(newtabParams.resumeContinueAnyway);
   state.continueDomain = newtabParams.continueDomain || "";
 
-  state.timerWheel = self.createTimerWheel({
-    wheelElement: ui.wheel,
-    minMinutes: 1,
-    maxMinutes: 120,
-    initialMinutes: 1,
-    onChange: (minutes) => {
-      state.selectedMinutes = minutes;
-    }
-  });
   applyGateModeUi();
   bindEvents();
   if (typeof initFidgetCube === "function") initFidgetCube();

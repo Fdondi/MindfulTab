@@ -28,6 +28,9 @@ async function refreshSummary() {
     sendBtn.disabled = true;
     return;
   }
+  await EXT_API.runtime
+    .sendMessage({ type: "mindfultab/pomodoro-skip-break", payload: { tabId } })
+    .catch(() => null);
   const resp = await EXT_API.runtime
     .sendMessage({ type: "mindfultab/get-state", payload: { forTabId: tabId } })
     .catch(() => null);
@@ -49,7 +52,11 @@ async function refreshSummary() {
     sendBtn.disabled = false;
     return;
   }
-  summaryEl.textContent = `${formatRemaining(session.endsAt)} left on ${domain}. Intent: ${reason}`;
+  if (session.pomodoro?.phase === "break") {
+    summaryEl.textContent = `Pomodoro break — ${formatRemaining(session.endsAt)} left. Intent: ${reason}`;
+  } else {
+    summaryEl.textContent = `${formatRemaining(session.endsAt)} left on ${domain}. Intent: ${reason}`;
+  }
   sendBtn.disabled = false;
 }
 

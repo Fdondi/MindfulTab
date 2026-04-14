@@ -6,11 +6,23 @@ function createTimerWheel(config = {}) {
 
   const minMinutes = Math.max(1, Number(config.minMinutes || 1));
   const maxMinutes = Math.max(minMinutes, Number(config.maxMinutes || 120));
+  const stepMinutes = Math.max(1, Math.round(Number(config.stepMinutes || 1)));
   const onChange = typeof config.onChange === "function" ? config.onChange : () => {};
-  let selectedMinutes = Math.max(minMinutes, Math.min(maxMinutes, Number(config.initialMinutes || minMinutes)));
+
+  function snapToStep(raw) {
+    const x = Math.round(Number(raw) || minMinutes);
+    if (stepMinutes <= 1) {
+      return Math.max(minMinutes, Math.min(maxMinutes, x));
+    }
+    const stepsFromMin = Math.round((x - minMinutes) / stepMinutes);
+    const snapped = minMinutes + stepsFromMin * stepMinutes;
+    return Math.max(minMinutes, Math.min(maxMinutes, snapped));
+  }
+
+  let selectedMinutes = snapToStep(config.initialMinutes != null ? config.initialMinutes : minMinutes);
 
   function setSelected(nextMinutes, shouldScroll) {
-    selectedMinutes = Math.max(minMinutes, Math.min(maxMinutes, Number(nextMinutes || minMinutes)));
+    selectedMinutes = snapToStep(nextMinutes || minMinutes);
     const options = Array.from(wheelElement.querySelectorAll(".timer-wheel-option"));
     for (const option of options) {
       const selected = Number(option.dataset.minutes) === selectedMinutes;
@@ -44,7 +56,7 @@ function createTimerWheel(config = {}) {
   }
 
   wheelElement.innerHTML = "";
-  for (let i = minMinutes; i <= maxMinutes; i += 1) {
+  for (let i = minMinutes; i <= maxMinutes; i += stepMinutes) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "timer-wheel-option";

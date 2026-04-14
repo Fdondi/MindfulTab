@@ -10,6 +10,115 @@ const lastUrlByTabId = {};
 const allowDomainUntilMs = {};
 const timerPendingTabs = new Set(); // tabIds that opened newtab but haven't started a timer yet
 let quickLaunchDomains = new Set(); // in-memory cache of unmonitored domains
+/** Tab IDs that may skip the karma reflection gate (work-promise path); mirrored to storage.session when available. */
+const gateExemptTabIds = new Set();
+let gateExemptTabIdsLoaded = false;
+const GATE_EXEMPT_TAB_IDS_SESSION_KEY = "mindfultabGateExemptTabIds";
+
+async function ensureGateExemptTabIdsLoaded() {
+  if (gateExemptTabIdsLoaded) return;
+  gateExemptTabIdsLoaded = true;
+  try {
+    if (EXT_API.storage?.session) {
+      const data = await EXT_API.storage.session.get(GATE_EXEMPT_TAB_IDS_SESSION_KEY);
+      const arr = data[GATE_EXEMPT_TAB_IDS_SESSION_KEY] || [];
+      for (const id of arr) {
+        if (Number.isInteger(id)) gateExemptTabIds.add(id);
+      }
+    }
+  } catch (_) {
+    /* session storage may be unavailable; in-memory set still applies until worker restarts */
+  }
+}
+
+async function persistGateExemptTabIds() {
+  try {
+    if (EXT_API.storage?.session) {
+      await EXT_API.storage.session.set({
+        [GATE_EXEMPT_TAB_IDS_SESSION_KEY]: Array.from(gateExemptTabIds)
+      });
+    }
+  } catch (_) {}
+}
+
+function isTabGateExempt(tabId) {
+  return Number.isInteger(tabId) && gateExemptTabIds.has(tabId);
+}
+
+async function addGateExemptTab(tabId) {
+  await ensureGateExemptTabIdsLoaded();
+  if (!Number.isInteger(tabId)) return;
+  gateExemptTabIds.add(tabId);
+  await persistGateExemptTabIds();
+}
+
+async function removeGateExemptTab(tabId) {
+  await ensureGateExemptTabIdsLoaded();
+  if (!Number.isInteger(tabId)) return;
+  gateExemptTabIds.delete(tabId);
+  await persistGateExemptTabIds();
+}
+
+const POMODORO_BREAK_MINUTES = 5;
+const POMODORO_WORK_MIN = 5;
+const POMODORO_WORK_MAX = 120;
+const POMODORO_WORK_STEP = 5;
+const POMODORO_WORK_DEFAULT = 25;
+const pomodoroEnrolledTabIds = new Set();
+let pomodoroEnrolledTabIdsLoaded = false;
+const POMODORO_ENROLLED_TAB_IDS_SESSION_KEY = "mindfultabPomodoroEnrolledTabIds";
+
+async function ensurePomodoroEnrolledTabIdsLoaded() {
+  if (pomodoroEnrolledTabIdsLoaded) return;
+  pomodoroEnrolledTabIdsLoaded = true;
+  try {
+    if (EXT_API.storage?.session) {
+      const data = await EXT_API.storage.session.get(POMODORO_ENROLLED_TAB_IDS_SESSION_KEY);
+      const arr = data[POMODORO_ENROLLED_TAB_IDS_SESSION_KEY] || [];
+      for (const id of arr) {
+        if (Number.isInteger(id)) pomodoroEnrolledTabIds.add(id);
+      }
+    }
+  } catch (_) {}
+}
+
+async function persistPomodoroEnrolledTabIds() {
+  try {
+    if (EXT_API.storage?.session) {
+      await EXT_API.storage.session.set({
+        [POMODORO_ENROLLED_TAB_IDS_SESSION_KEY]: Array.from(pomodoroEnrolledTabIds)
+      });
+    }
+  } catch (_) {}
+}
+
+function isPomodoroEnrolledTab(tabId) {
+  return Number.isInteger(tabId) && pomodoroEnrolledTabIds.has(tabId);
+}
+
+async function addPomodoroEnrolledTab(tabId) {
+  await ensurePomodoroEnrolledTabIdsLoaded();
+  if (!Number.isInteger(tabId)) return;
+  pomodoroEnrolledTabIds.add(tabId);
+  await persistPomodoroEnrolledTabIds();
+}
+
+async function removePomodoroEnrolledTab(tabId) {
+  await ensurePomodoroEnrolledTabIdsLoaded();
+  if (!Number.isInteger(tabId)) return;
+  pomodoroEnrolledTabIds.delete(tabId);
+  await persistPomodoroEnrolledTabIds();
+}
+
+function clampPomodoroWorkMinutes(raw) {
+  const base = Number(raw);
+  const n = Number.isFinite(base) ? base : POMODORO_WORK_DEFAULT;
+  const snapped = Math.round(n / POMODORO_WORK_STEP) * POMODORO_WORK_STEP;
+  return Math.max(
+    POMODORO_WORK_MIN,
+    Math.min(POMODORO_WORK_MAX, snapped || POMODORO_WORK_DEFAULT)
+  );
+}
 
 const QUICK_LAUNCH_FOLDER = "Quick Launch";
 
@@ -388,7 +497,7 @@ async function resumeEndedSessionMinutes(tabId, extraMinutes) {
   return { ok: true, session: next };
 }
 
-async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
+async function startTimer({ durationMinutes, reason, tabUrl, tabId, pomodoro }) {
   const startedAt = Date.now();
   const durationMs = Math.max(1, Number(durationMinutes)) * 60 * 1000;
   const endsAt = startedAt + durationMs;
@@ -405,6 +514,9 @@ async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
     nudgedAt: null,
     createdAtIso: nowIso()
   };
+  if (pomodoro && pomodoro.phase === "work" && pomodoro.workMinutes) {
+    session.pomodoro = { workMinutes: pomodoro.workMinutes, phase: "work" };
+  }
 
   await setTabSession(ownerTabId, session);
   await scheduleTimerAlarm(ownerTabId, endsAt);
@@ -420,6 +532,10 @@ async function startTimer({ durationMinutes, reason, tabUrl, tabId }) {
 }
 
 async function startBypassTimerIfNeeded(tabUrl, tabId) {
+  if (isTabGateExempt(tabId)) {
+    timerPendingTabs.delete(tabId);
+    return null;
+  }
   if (!shouldTrackUrl(tabUrl)) return null;
   if (!timerPendingTabs.has(tabId)) return null;
 
@@ -449,6 +565,15 @@ async function finishTimerIfNeeded(tabId) {
   const session = await getTabSession(tabId);
   if (!session || session.ended) return null;
   if (Date.now() < session.endsAt) return session;
+
+  if (session.pomodoro?.phase === "work") {
+    await beginPomodoroBreak(tabId, session);
+    return null;
+  }
+  if (session.pomodoro?.phase === "break") {
+    await restartPomodoroWork(tabId, session);
+    return null;
+  }
 
   const endedSession = { ...session, ended: true, nudgedAt: Date.now() };
   await setTabSession(tabId, endedSession);
@@ -579,17 +704,27 @@ async function injectBirds(tabId) {
   await EXT_API.scripting.executeScript({ target: { tabId }, files: ["src/birds/birds.js"] });
 }
 
+async function injectPauseBird(tabId) {
+  await EXT_API.scripting.insertCSS({ target: { tabId }, files: ["src/birds/birds-pause.css"] });
+  await EXT_API.scripting.executeScript({ target: { tabId }, files: ["src/birds/birds-pause.js"] });
+}
+
 /** Remove bird overlay from the tab (DOM, intervals, injected CSS). Best-effort on restricted pages. */
 async function removeBirdsFromTab(tabId) {
   if (!Number.isInteger(tabId)) return;
-  try {
-    await EXT_API.scripting.removeCSS({ target: { tabId }, files: ["src/birds/birds.css"] });
-  } catch (_) {
-    /* CSS may be absent or page may block scripting */
+  for (const file of ["src/birds/birds.css", "src/birds/birds-pause.css"]) {
+    try {
+      await EXT_API.scripting.removeCSS({ target: { tabId }, files: [file] });
+    } catch (_) {
+      /* CSS may be absent or page may block scripting */
+    }
   }
   const runTeardown = () => {
     if (typeof window.__mindfultabBirdsTeardown === "function") {
       window.__mindfultabBirdsTeardown();
+    }
+    if (typeof window.__mindfultabPauseBirdTeardown === "function") {
+      window.__mindfultabPauseBirdTeardown();
     }
   };
   try {
@@ -599,6 +734,49 @@ async function removeBirdsFromTab(tabId) {
       await EXT_API.scripting.executeScript({ target: { tabId }, func: runTeardown });
     } catch (_) {}
   }
+}
+
+async function beginPomodoroBreak(tabId, session) {
+  await clearBirdsAlarm(tabId);
+  await removeBirdsFromTab(tabId);
+  const breakEndsAt = Date.now() + POMODORO_BREAK_MINUTES * 60 * 1000;
+  const workMinutes = session.pomodoro?.workMinutes || clampPomodoroWorkMinutes(session.durationMinutes);
+  const next = {
+    ...session,
+    endsAt: breakEndsAt,
+    durationMinutes: POMODORO_BREAK_MINUTES,
+    pomodoro: { workMinutes, phase: "break" },
+    ended: false,
+    nudgedAt: null
+  };
+  await setTabSession(tabId, next);
+  await scheduleTimerAlarm(tabId, breakEndsAt);
+  startBadgeTick();
+  await updateBadge(tabId);
+  await appendHistory({ type: "pomodoro_break_started", atIso: nowIso(), tabId, session: next });
+  await logInteraction("pomodoro_break_started", { tabId, domain: next.domain || "" });
+  injectPauseBird(tabId).catch(() => {});
+}
+
+async function restartPomodoroWork(tabId, session) {
+  await clearBirdsAlarm(tabId);
+  await removeBirdsFromTab(tabId);
+  const wm = session.pomodoro?.workMinutes || clampPomodoroWorkMinutes(session.durationMinutes);
+  const endsAt = Date.now() + wm * 60 * 1000;
+  const next = {
+    ...session,
+    endsAt,
+    durationMinutes: wm,
+    pomodoro: { workMinutes: wm, phase: "work" },
+    ended: false,
+    nudgedAt: null
+  };
+  await setTabSession(tabId, next);
+  await scheduleTimerAlarm(tabId, endsAt);
+  startBadgeTick();
+  await updateBadge(tabId);
+  await appendHistory({ type: "pomodoro_work_resumed", atIso: nowIso(), tabId, session: next });
+  await logInteraction("pomodoro_work_resumed", { tabId, domain: next.domain || "" });
 }
 
 EXT_API.alarms.onAlarm.addListener(async (alarm) => {
@@ -668,6 +846,7 @@ EXT_API.alarms.onAlarm.addListener(async (alarm) => {
 
 EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
+  await ensureGateExemptTabIdsLoaded();
   await recoverUnderwaterKarmaCatchUp();
   const url = tab?.url || "";
   await traceBoundary("tabs_on_updated", {
@@ -723,6 +902,11 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (shouldNeverGateUrl(url)) return;
   const domain = getDomainFromUrl(url);
   if (!domain) return;
+
+  if (isTabGateExempt(tabId)) {
+    await traceDecision("skip_gate_tab_work_promise_exempt", { tabId, domain });
+    return;
+  }
 
   // If the user already entered an intent/reason during an active timer session,
   // we consider the reflection done and skip the "continue anyway" reflection gate.
@@ -807,6 +991,8 @@ EXT_API.tabs.onActivated.addListener(async (activeInfo) => {
 EXT_API.tabs.onRemoved.addListener(async (tabId) => {
   delete lastUrlByTabId[tabId];
   timerPendingTabs.delete(tabId);
+  await removeGateExemptTab(tabId);
+  await removePomodoroEnrolledTab(tabId);
   await clearBirdsAlarm(tabId);
 
   const session = await getTabSession(tabId);
@@ -833,6 +1019,8 @@ EXT_API.runtime.onInstalled.addListener(async () => {
 // Warm the cache whenever the service worker starts
 refreshQuickLaunchCache().catch(() => {});
 recoverUnderwaterKarmaCatchUp().catch(() => {});
+ensureGateExemptTabIdsLoaded().catch(() => {});
+ensurePomodoroEnrolledTabIdsLoaded().catch(() => {});
 
 // Keep cache in sync with bookmark changes
 EXT_API.bookmarks.onCreated.addListener(() => refreshQuickLaunchCache().catch(() => {}));
@@ -863,6 +1051,14 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
           confirmedLongSession
         }, sender);
         timerPendingTabs.delete(senderTabId);
+        await ensurePomodoroEnrolledTabIdsLoaded();
+        let effectiveDurationMinutes = durationMinutes;
+        let pomodoroMeta = null;
+        if (isPomodoroEnrolledTab(senderTabId)) {
+          const wm = clampPomodoroWorkMinutes(effectiveDurationMinutes);
+          effectiveDurationMinutes = wm;
+          pomodoroMeta = { workMinutes: wm, phase: "work" };
+        }
         const settings = await getSettings();
         const ai = self.MINDFULTAB_AI;
         if (
@@ -884,7 +1080,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
           try {
             decision = await ai.validateIntent({
               settings,
-              durationMinutes,
+              durationMinutes: effectiveDurationMinutes,
               reason,
               confirmedLongSession
             });
@@ -914,10 +1110,11 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         const session = await startTimer({
-          durationMinutes,
+          durationMinutes: effectiveDurationMinutes,
           reason,
           tabUrl,
-          tabId: senderTabId
+          tabId: senderTabId,
+          pomodoro: pomodoroMeta
         });
         sendResponse({ ok: true, session });
       } catch (err) {
@@ -1080,6 +1277,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "mindfultab/get-state") {
       await recoverUnderwaterKarmaCatchUp();
+      await ensurePomodoroEnrolledTabIdsLoaded();
       const explicitTab = message.payload?.forTabId;
       const targetTabId = Number.isInteger(explicitTab) ? explicitTab : senderTabId;
       if (targetTabId != null) await finishTimerIfNeeded(targetTabId);
@@ -1089,7 +1287,14 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         getDomainVisits(),
         getSettings()
       ]);
-      sendResponse({ ok: true, session, karmaByDomain, domainVisits, settings });
+      sendResponse({
+        ok: true,
+        session,
+        karmaByDomain,
+        domainVisits,
+        settings,
+        pomodoroEnrolled: targetTabId != null && isPomodoroEnrolledTab(targetTabId)
+      });
       return;
     }
 
@@ -1139,6 +1344,53 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "mindfultab/clear-interactions") {
       await clearInteractions();
       await appendHistory({ type: "interactions_cleared", atIso: nowIso() });
+      sendResponse({ ok: true });
+      return;
+    }
+
+    if (message?.type === "mindfultab/pomodoro-skip-break") {
+      let tabId = message.payload?.tabId;
+      if (!Number.isInteger(tabId)) {
+        tabId = Number.isInteger(senderTabId) ? senderTabId : null;
+      }
+      if (!Number.isInteger(tabId)) {
+        sendResponse({ ok: false, error: "tabId is required" });
+        return;
+      }
+      const session = await getTabSession(tabId);
+      if (!session?.pomodoro || session.pomodoro.phase !== "break") {
+        sendResponse({ ok: true, skipped: false });
+        return;
+      }
+      await restartPomodoroWork(tabId, session);
+      await updateBadge(tabId);
+      await logInteraction("pomodoro_skip_break_popup", { tabId }, sender);
+      sendResponse({ ok: true, skipped: true, session: await getTabSession(tabId) });
+      return;
+    }
+
+    if (message?.type === "mindfultab/set-tab-gate-exempt") {
+      let tabId = message.payload?.tabId;
+      if (!Number.isInteger(tabId)) {
+        tabId = Number.isInteger(senderTabId) ? senderTabId : null;
+      }
+      if (!Number.isInteger(tabId)) {
+        sendResponse({ ok: false, error: "tabId is required" });
+        return;
+      }
+      await addGateExemptTab(tabId);
+      if (message.payload?.pomodoro) {
+        await addPomodoroEnrolledTab(tabId);
+      }
+      timerPendingTabs.delete(tabId);
+      const sess = await getTabSession(tabId);
+      if (sess && !sess.ended && isAutoBypassTimerReason(sess.reason)) {
+        await clearTimerAlarm(tabId);
+        await clearBirdsAlarm(tabId);
+        await clearTabSession(tabId);
+        await stopBadgeTickIfIdle();
+      }
+      await logInteraction("tab_gate_exempt_work_promise", { tabId }, sender);
       sendResponse({ ok: true });
       return;
     }
