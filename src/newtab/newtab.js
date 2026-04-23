@@ -41,6 +41,7 @@ const ui = {
   openSettingsBtn: document.getElementById("open-settings-btn"),
   openAiSettingsBtn: document.getElementById("open-ai-settings-btn"),
   newtabGoogleAuthBtn: document.getElementById("newtab-google-auth-btn"),
+  newtabAuthHint: document.getElementById("newtab-auth-hint"),
   openLogsBtn: document.getElementById("open-logs-btn"),
   extVersion: document.getElementById("ext-version"),
   aiIntentPanel: document.getElementById("ai-intent-panel"),
@@ -55,8 +56,31 @@ const ui = {
   aiIntentNoticeDismiss: document.getElementById("ai-intent-notice-dismiss")
 };
 
+function clearNewtabAuthHint() {
+  if (!ui.newtabAuthHint) return;
+  ui.newtabAuthHint.textContent = "";
+  ui.newtabAuthHint.classList.add("hidden");
+}
+
+function showNewtabAuthHint(message) {
+  if (!ui.newtabAuthHint) return;
+  ui.newtabAuthHint.textContent = message || "";
+  if (message) ui.newtabAuthHint.classList.remove("hidden");
+  else ui.newtabAuthHint.classList.add("hidden");
+}
+
+function newtabAuthHintForStartTimer(detail) {
+  const err = String(detail?.error || "");
+  if (/expired/i.test(err)) {
+    showNewtabAuthHint("AI session expired — use Sign in with Google above.");
+    return;
+  }
+  showNewtabAuthHint("Use Sign in with Google above for AI checks.");
+}
+
 const intentFeedback = self.MINDFULTAB_INTENT_FEEDBACK.createMindfulTabIntentFeedback({
-  getMainReason: () => (ui.reasonInput?.value || "").trim()
+  getMainReason: () => (ui.reasonInput?.value || "").trim(),
+  onAuthSessionRequired: newtabAuthHintForStartTimer
 });
 
 function renderExtensionVersion() {
@@ -192,14 +216,6 @@ async function logInteraction(eventType, details = {}) {
   }
 }
 
-async function traceBoundary(name, details = {}) {
-  await logInteraction(`trace_boundary_${name}`, details);
-}
-
-async function traceDecision(name, details = {}) {
-  await logInteraction(`trace_decision_${name}`, details);
-}
-
 function renderNewtabGoogleAuthButton() {
   if (!ui.newtabGoogleAuthBtn || !OAUTH) return;
   const signedIn = OAUTH.mindfultabAiAuthUsable(state.settings);
@@ -263,12 +279,6 @@ async function refreshState() {
 }
 
 async function finalizeSuccessfulTimerStart(reason) {
-  await traceDecision("start_timer_success", {
-    selectedMinutes: state.selectedMinutes,
-    hasReason: Boolean(reason),
-    target: state.pendingTargetUrl || ""
-  });
-
   renderStatus();
   document.activeElement?.blur();
 
@@ -283,14 +293,9 @@ async function finalizeSuccessfulTimerStart(reason) {
       });
       if (!continueResp?.ok) throw new Error(continueResp?.error || "Continue failed");
     } catch (_) {
-      await traceDecision("continue_anyway_resume_failed", {});
       intentFeedback.showNotice("Could not continue after timer. Try again.");
       return;
     }
-    await traceDecision("continue_anyway_resume_success", {
-      target: state.pendingTargetUrl || "",
-      domain: state.continueDomain || ""
-    });
     return;
   }
 
@@ -310,17 +315,13 @@ function setWorkPromiseFeedback(text, variant = "") {
 
 async function handleWorkPromiseClick() {
   intentFeedback.hide();
+  clearNewtabAuthHint();
   setWorkPromiseFeedback("");
   try {
     const tabId = await getCurrentTabId();
     if (tabId == null) {
       throw new Error("No tab id");
     }
-    await traceBoundary("gate_work_promise_click", {
-      domain: state.gateDomain,
-      target: state.pendingTargetUrl,
-      tabId
-    });
     const exemptResp = await sendMessage("mindfultab/set-tab-gate-exempt", { tabId, pomodoro: true });
     if (!exemptResp?.ok) {
       throw new Error(exemptResp?.error || "Could not mark tab exempt");
@@ -346,16 +347,9 @@ async function requestStartTimer(reason, confirmedLongSession) {
 }
 
 async function handleStartClick(confirmedLongSession = false) {
+  clearNewtabAuthHint();
   const reason = intentFeedback.getEffectiveReason();
-  await traceBoundary("start_click", {
-    isGateMode: state.isGateMode,
-    selectedMinutes: state.selectedMinutes,
-    hasReason: Boolean(reason),
-    target: state.pendingTargetUrl || "",
-    confirmedLongSession: Boolean(confirmedLongSession)
-  });
   if (state.isGateMode && !reason) {
-    await traceDecision("reject_start_reason_required", { isGateMode: true });
     intentFeedback.showNotice("Please add a reason before continuing.");
     return;
   }
@@ -364,12 +358,11 @@ async function handleStartClick(confirmedLongSession = false) {
   try {
     response = await requestStartTimer(reason, confirmedLongSession);
   } catch (err) {
-    await traceDecision("start_timer_message_error", { error: String(err) });
     intentFeedback.showNotice("Service worker not ready. Reload this tab and try again.");
     return;
   }
 
-  const result = await intentFeedback.handleStartTimerResponse(response, { traceDecision });
+  const result = await intentFeedback.handleStartTimerResponse(response);
   if (!result.ok) return;
 
   state.activeSession = result.session;
@@ -613,7 +606,7 @@ function bindEvents() {
   });
   ui.newtabGoogleAuthBtn?.addEventListener("click", async () => {
     if (!OAUTH) {
-      intentFeedback.showNotice("AI sign-in is not available. Reload the page.");
+      showNewtabAuthHint("AI sign-in is not available. Reload the page.");
       return;
     }
     const signedIn = OAUTH.mindfultabAiAuthUsable(state.settings);
@@ -622,15 +615,15 @@ function bindEvents() {
       if (signedIn) {
         await OAUTH.mindfultabGoogleSignOut(sendMessage);
         await logInteraction("newtab_google_sign_out_click", {});
-        intentFeedback.showNotice("Signed out from AI.");
+        showNewtabAuthHint("Signed out from AI.");
       } else {
         const out = await OAUTH.mindfultabCompleteGoogleSignIn(self.EXT_API, sendMessage);
         await logInteraction("newtab_google_sign_in_success", { hasEmail: Boolean(out?.email) });
-        intentFeedback.showNotice(out?.email ? `Signed in as ${out.email}.` : "Signed in.");
+        showNewtabAuthHint(out?.email ? `Signed in as ${out.email}.` : "Signed in.");
       }
       await refreshState();
     } catch (err) {
-      intentFeedback.showNotice(String(err));
+      showNewtabAuthHint(String(err));
     } finally {
       ui.newtabGoogleAuthBtn.disabled = false;
     }
@@ -675,13 +668,6 @@ async function init() {
   renderExtensionVersion();
   await logInteraction("newtab_opened", {});
   const newtabParams = getNewtabParams();
-  await traceBoundary("newtab_params_received", {
-    gate: Boolean(newtabParams.gate),
-    target: String(newtabParams.targetUrl || ""),
-    domain: String(newtabParams.domain || ""),
-    score: Number(newtabParams.score || 0),
-    resumeContinueAnyway: Boolean(newtabParams.resumeContinueAnyway)
-  });
   state.isGateMode = Boolean(newtabParams.gate);
   state.pendingTargetUrl = newtabParams.targetUrl || "";
   state.gateDomain = newtabParams.domain || "";
@@ -704,10 +690,6 @@ async function init() {
   }
   await refreshState();
   if (state.isGateMode) {
-    await traceDecision("gate_mode_enabled", {
-      domain: state.gateDomain,
-      score: state.gateScore
-    });
     prefillTimerFromActiveSession();
   }
   await loadQuickLaunch();

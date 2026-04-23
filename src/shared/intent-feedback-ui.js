@@ -8,6 +8,8 @@ function createMindfulTabIntentFeedback(config) {
     typeof config.getMainReason === "function"
       ? config.getMainReason
       : () => "";
+  const onAuthSessionRequired =
+    typeof config.onAuthSessionRequired === "function" ? config.onAuthSessionRequired : null;
 
   const id = (name) => (config.ids && config.ids[name]) || name;
   const $ = (name) => document.getElementById(id(name));
@@ -91,33 +93,35 @@ function createMindfulTabIntentFeedback(config) {
 
   /**
    * @param {object} response - mindfultab/start-timer response
-   * @param {{ traceDecision?: (name: string, details?: object) => Promise<void> }} [trace]
    * @returns {Promise<{ ok: true, session: object } | { ok: false }>}
    */
-  async function handleStartTimerResponse(response, trace) {
-    const traceDecision = trace?.traceDecision || (async () => {});
+  async function handleStartTimerResponse(response) {
     if (response?.ok) {
       hide();
       return { ok: true, session: response.session };
     }
     if (response?.needsConfirmation && response?.message) {
-      await traceDecision("intent_confirmation_shown", { message: response.message });
       showConfirm(response.message);
       return { ok: false };
     }
     if (response?.aiRejected && response?.message) {
-      await traceDecision("intent_rejected_ui", { message: response.message });
       showReject(response.message);
       return { ok: false };
     }
     if (response?.code === "need_google_sign_in" || response?.code === "missing_ai_token") {
-      await traceDecision("start_timer_need_google_sign_in", { code: response.code });
-      showNotice(
-        response.error || "Open MindfulTab settings → AI and sign in with Google."
-      );
+      hide();
+      if (onAuthSessionRequired) {
+        await onAuthSessionRequired({
+          code: response.code,
+          error: response.error || ""
+        });
+      } else {
+        showNotice(
+          response.error || "Open MindfulTab settings → AI and sign in with Google."
+        );
+      }
       return { ok: false };
     }
-    await traceDecision("start_timer_response_not_ok", { responseError: String(response?.error || "") });
     showNotice(response?.error || "Could not start timer. Try again.");
     return { ok: false };
   }

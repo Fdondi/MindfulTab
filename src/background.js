@@ -220,14 +220,6 @@ async function logInteraction(eventType, details = {}, sender = null) {
   });
 }
 
-async function traceBoundary(name, details = {}, sender = null) {
-  await logInteraction(`trace_boundary_${name}`, details, sender);
-}
-
-async function traceDecision(name, details = {}, sender = null) {
-  await logInteraction(`trace_decision_${name}`, details, sender);
-}
-
 function cleanUrlForLog(rawUrl) {
   if (!rawUrl) return "";
   try {
@@ -421,6 +413,7 @@ function isAutoBypassTimerReason(reason) {
   return r === AUTO_BYPASS_TIMER_REASON || r.includes("Auto-started after bypassing");
 }
 
+/** Google ID token present and JWT not past expiry (see shared/google-oauth.js). */
 function hasUsableBackendAppToken(settings) {
   const fn = self.MINDFULTAB_GOOGLE_OAUTH?.mindfultabAiAuthUsable;
   return typeof fn === "function" ? fn(settings) : false;
@@ -432,9 +425,149 @@ async function clearBackendAuthInSettings() {
     ...current,
     aiBackendToken: "",
     aiBackendTokenExpiresAtMs: 0,
-    aiGoogleEmail: ""
+    aiGoogleEmail: "",
+    aiGoogleAuthLastRefreshAtMs: 0,
+    aiGoogleAuthLastRefreshKind: "",
+    aiGoogleAuthLastRefreshError: ""
   };
   await setStorageValues({ [STORAGE_KEYS.SETTINGS]: next });
+}
+
+/**
+ * @param {string} idToken
+ * @param {{ source?: "silent" | "interactive" }} [options]
+ */
+async function persistGoogleIdSession(idToken, options = {}) {
+  const source = options.source === "silent" ? "silent" : "interactive";
+  const settings = await getSettings();
+  const baseUrl = settings.aiBackendBaseUrl || self.MINDFULTAB_AI.DEFAULT_AI_BACKEND_BASE_URL;
+  await self.MINDFULTAB_AI.checkBackendAuthStatus(baseUrl, idToken);
+  let email = "";
+  let expiresAtMs = 0;
+  try {
+    const payload = self.MINDFULTAB_GOOGLE_OAUTH.decodeJwtPayload(idToken);
+    email = String(payload.email || payload.sub || "").trim();
+    const exp = Number(payload.exp);
+    if (Number.isFinite(exp)) {
+      expiresAtMs = exp * 1000;
+    }
+  } catch (err) {
+    throw new Error(`Invalid Google ID token: ${String(err)}`);
+  }
+  if (!expiresAtMs) {
+    throw new Error("Google ID token missing exp claim.");
+  }
+  const refreshedAt = Date.now();
+  const next = {
+    ...settings,
+    aiBackendToken: idToken,
+    aiBackendTokenExpiresAtMs: expiresAtMs,
+    aiGoogleEmail: email,
+    aiGoogleAuthLastRefreshAtMs: refreshedAt,
+    aiGoogleAuthLastRefreshKind: source,
+    aiGoogleAuthLastRefreshError: ""
+  };
+  await setStorageValues({ [STORAGE_KEYS.SETTINGS]: next });
+}
+
+/**
+ * @param {{ ok: false, error: string, stage?: string }} result
+ */
+async function recordGoogleAuthSilentRefreshFailure(result) {
+  const error = String(result?.error || "unknown").slice(0, 500);
+  const stage = String(result?.stage || "").slice(0, 80);
+  const line = stage ? `${stage}: ${error}` : error;
+  const current = await getSettings();
+  await setStorageValues({
+    [STORAGE_KEYS.SETTINGS]: {
+      ...current,
+      aiGoogleAuthLastRefreshError: line
+    }
+  });
+  await logInteraction("google_id_token_silent_refresh_failed", {
+    error,
+    stage: stage || undefined
+  });
+  console.warn("[MindfulTab] Silent Google ID token refresh failed", { error, stage: stage || undefined });
+}
+
+async function getSettingsWithFreshAiTokenIfNeeded() {
+  let settings = await getSettings();
+  await logInteraction("google_id_token_refresh_check_started", {
+    hasStoredToken: Boolean(String(settings.aiBackendToken || "").trim()),
+    tokenExpiresAtMs: Number(settings.aiBackendTokenExpiresAtMs || 0)
+  });
+  if (hasUsableBackendAppToken(settings)) {
+    await logInteraction("google_id_token_refresh_not_needed", {
+      tokenExpiresAtMs: Number(settings.aiBackendTokenExpiresAtMs || 0)
+    });
+    return settings;
+  }
+  if (!String(settings.aiBackendToken || "").trim()) {
+    await logInteraction("google_id_token_refresh_skipped_no_stored_token", {});
+    return settings;
+  }
+  const oauth = self.MINDFULTAB_GOOGLE_OAUTH;
+  const tryDetailed = oauth?.mindfultabTrySilentGoogleIdTokenRefreshDetailed;
+  const tryLegacy = oauth?.mindfultabTrySilentGoogleIdTokenRefresh;
+  if (!tryDetailed && !tryLegacy) {
+    await logInteraction("google_id_token_refresh_skipped_no_oauth", {});
+    return settings;
+  }
+  await logInteraction("google_id_token_silent_refresh_attempted", {});
+  let result;
+  if (tryDetailed) {
+    try {
+      result = await tryDetailed(EXT_API);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await recordGoogleAuthSilentRefreshFailure({
+        error: `helper_throw: ${msg}`,
+        stage: "helper_throw"
+      });
+      return settings;
+    }
+  } else {
+    let idToken = null;
+    try {
+      idToken = await tryLegacy(EXT_API);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await recordGoogleAuthSilentRefreshFailure({
+        error: `legacy_helper_throw: ${msg}`,
+        stage: "legacy_helper_throw"
+      });
+      return settings;
+    }
+    result = idToken
+      ? { ok: true, idToken }
+      : {
+          ok: false,
+          error: "Silent refresh returned no token (legacy helper).",
+          stage: "legacy_null"
+        };
+  }
+  if (!result.ok) {
+    await recordGoogleAuthSilentRefreshFailure(result);
+    return settings;
+  }
+  try {
+    await persistGoogleIdSession(result.idToken, { source: "silent" });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await recordGoogleAuthSilentRefreshFailure({ error: `persist: ${msg}`, stage: "backend_or_jwt" });
+    return settings;
+  }
+  const fresh = await getSettings();
+  await logInteraction("google_id_token_refreshed_silent", {
+    refreshedAtMs: fresh.aiGoogleAuthLastRefreshAtMs,
+    tokenExpiresAtMs: fresh.aiBackendTokenExpiresAtMs
+  });
+  console.info("[MindfulTab] Google ID token refreshed silently", {
+    refreshedAtMs: fresh.aiGoogleAuthLastRefreshAtMs,
+    tokenExpiresAtMs: fresh.aiBackendTokenExpiresAtMs
+  });
+  return fresh;
 }
 
 async function extendActiveSessionMinutes(tabId, extraMinutes) {
@@ -849,17 +982,11 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   await ensureGateExemptTabIdsLoaded();
   await recoverUnderwaterKarmaCatchUp();
   const url = tab?.url || "";
-  await traceBoundary("tabs_on_updated", {
-    tabId,
-    status: changeInfo.status || "",
-    url: cleanUrlForLog(url)
-  });
   const urlDomain = getDomainFromUrl(url);
   if (urlDomain && quickLaunchDomains.has(urlDomain)) {
     const optOutDomains = await getOptOutDomains();
     // Quick Launch domains are always-allow by default, unless manually disabled in settings.
     if (!hasOwn(optOutDomains, urlDomain) || Boolean(optOutDomains[urlDomain])) {
-      await traceDecision("skip_gate_quick_launch_allowed", { tabId, domain: urlDomain });
       timerPendingTabs.delete(tabId);
       await recordDomainVisit(url, tabId);
       return;
@@ -871,11 +998,6 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (shouldTrackUrl(url)) {
     const session = await getTabSession(tabId);
     if (session?.ended) {
-      await traceDecision("ended_session_bird_phase", {
-        tabId,
-        domain: session.domain || "",
-        endedAt: Number(session.endsAt || 0)
-      });
       const birdPhaseEnds = session.endsAt + BIRD_PHASE_MS;
       if (Date.now() < birdPhaseEnds) {
         injectBirds(tabId).catch(() => {});
@@ -904,7 +1026,6 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (!domain) return;
 
   if (isTabGateExempt(tabId)) {
-    await traceDecision("skip_gate_tab_work_promise_exempt", { tabId, domain });
     return;
   }
 
@@ -916,12 +1037,6 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const hasUserManagedTimer =
     hasActiveTimer && Boolean(sessionReason) && sessionReason !== AUTO_BYPASS_TIMER_REASON;
   if (hasUserManagedTimer) {
-    await traceDecision("skip_gate_user_managed_timer", {
-      tabId,
-      domain,
-      hasActiveTimer,
-      hasReason: Boolean(sessionReason)
-    });
     return;
   }
 
@@ -931,34 +1046,23 @@ EXT_API.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     getOptOutDomains()
   ]);
   if (isDomainAlwaysAllowed(domain, optOutDomains)) {
-    await traceDecision("skip_gate_always_allowed", { tabId, domain });
     return;
   }
   const score = karmaByDomain[domain] || 0;
   const karmaState = karmaStateForScore(score, settings.hideThresholds || DEFAULT_SETTINGS.hideThresholds);
 
   if (karmaState === "normal") {
-    await traceDecision("skip_gate_karma_normal", { tabId, domain, score });
     return;
   }
   if ((allowDomainUntilMs[domain] || 0) > Date.now()) {
-    await traceDecision("skip_gate_bypass_window", { tabId, domain, score });
     return;
   }
   if (url.includes("/src/gate/gate.html")) {
-    await traceDecision("skip_gate_already_on_gate", { tabId, domain, score });
     return;
   }
 
   const gateUrl = EXT_API.runtime.getURL("src/newtab/newtab.html");
   const target = `${gateUrl}?gate=1&target=${encodeURIComponent(url)}&domain=${encodeURIComponent(domain)}&score=${encodeURIComponent(String(score))}`;
-  await traceDecision("show_gate", {
-    tabId,
-    domain,
-    score,
-    karmaState,
-    target: cleanUrlForLog(url)
-  });
   await EXT_API.tabs.update(tabId, { url: target });
   await appendHistory({ type: "reflection_gate_shown", atIso: nowIso(), domain, score, targetUrl: url });
   await logInteraction("reflection_gate_shown", {
@@ -1031,11 +1135,6 @@ EXT_API.bookmarks.onMoved.addListener(() => refreshQuickLaunchCache().catch(() =
 EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
     const senderTabId = sender?.tab?.id;
-    const messageType = String(message?.type || "");
-    await traceBoundary("runtime_on_message_received", {
-      messageType,
-      senderTabId: Number.isInteger(senderTabId) ? senderTabId : null
-    }, sender);
 
     if (message?.type === "mindfultab/start-timer") {
       try {
@@ -1043,13 +1142,6 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const reason = message.payload?.reason || "";
         const durationMinutes = message.payload?.durationMinutes;
         const confirmedLongSession = Boolean(message.payload?.confirmedLongSession);
-        await traceBoundary("start_timer_request", {
-          senderTabId: Number.isInteger(senderTabId) ? senderTabId : null,
-          durationMinutes: Number(durationMinutes || 0),
-          hasReason: Boolean(String(reason || "").trim()),
-          tabUrl: cleanUrlForLog(tabUrl),
-          confirmedLongSession
-        }, sender);
         timerPendingTabs.delete(senderTabId);
         await ensurePomodoroEnrolledTabIdsLoaded();
         let effectiveDurationMinutes = durationMinutes;
@@ -1059,7 +1151,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
           effectiveDurationMinutes = wm;
           pomodoroMeta = { workMinutes: wm, phase: "work" };
         }
-        const settings = await getSettings();
+        const settings = await getSettingsWithFreshAiTokenIfNeeded();
         const ai = self.MINDFULTAB_AI;
         if (
           ai &&
@@ -1067,7 +1159,6 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ai.shouldValidateIntent(settings, reason, isAutoBypassTimerReason)
         ) {
           if (!hasUsableBackendAppToken(settings)) {
-            await traceDecision("intent_validation_blocked_not_signed_in", {}, sender);
             sendResponse({
               ok: false,
               code: "need_google_sign_in",
@@ -1087,7 +1178,6 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
           } catch (err) {
             if (err && err.httpStatus === 401) {
               await clearBackendAuthInSettings();
-              await traceDecision("intent_validation_auth_expired", {}, sender);
               sendResponse({
                 ok: false,
                 code: "need_google_sign_in",
@@ -1098,12 +1188,10 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
             throw err;
           }
           if (decision.type === "reject") {
-            await traceDecision("intent_rejected_by_ai", { message: decision.message }, sender);
             sendResponse({ ok: false, aiRejected: true, message: decision.message });
             return;
           }
           if (decision.type === "confirm") {
-            await traceDecision("intent_needs_confirmation", { message: decision.message }, sender);
             sendResponse({ ok: false, needsConfirmation: true, message: decision.message });
             return;
           }
@@ -1118,7 +1206,6 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         sendResponse({ ok: true, session });
       } catch (err) {
-        await traceDecision("start_timer_failed", { error: String(err) }, sender);
         sendResponse({ ok: false, error: String(err) });
       }
       return;
@@ -1126,7 +1213,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "mindfultab/request-time-extension") {
       try {
-        const settings = await getSettings();
+        const settings = await getSettingsWithFreshAiTokenIfNeeded();
         if (!hasUsableBackendAppToken(settings)) {
           sendResponse({
             ok: false,
@@ -1226,24 +1313,25 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, error: "Missing Google ID token." });
           return;
         }
+        await persistGoogleIdSession(idToken, { source: "interactive" });
         const settings = await getSettings();
-        const baseUrl = settings.aiBackendBaseUrl || self.MINDFULTAB_AI.DEFAULT_AI_BACKEND_BASE_URL;
-        const { token, expiresAtMs } = await self.MINDFULTAB_AI.exchangeGoogleIdTokenForAppToken(baseUrl, idToken);
-        let email = "";
-        try {
-          const payload = self.MINDFULTAB_GOOGLE_OAUTH.decodeJwtPayload(idToken);
-          email = String(payload.email || payload.sub || "").trim();
-        } catch (_) {}
-        const next = {
-          ...settings,
-          aiBackendToken: token,
-          aiBackendTokenExpiresAtMs: expiresAtMs,
-          aiGoogleEmail: email
-        };
-        await setStorageValues({ [STORAGE_KEYS.SETTINGS]: next });
-        await logInteraction("google_sign_in_completed", { hasEmail: Boolean(email) });
+        const email = String(settings.aiGoogleEmail || "").trim();
+        await logInteraction("google_sign_in_completed", {
+          hasEmail: Boolean(email),
+          refreshedAtMs: settings.aiGoogleAuthLastRefreshAtMs
+        });
         sendResponse({ ok: true, email });
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const current = await getSettings();
+        await setStorageValues({
+          [STORAGE_KEYS.SETTINGS]: {
+            ...current,
+            aiGoogleAuthLastRefreshError: `interactive: ${msg}`.slice(0, 500)
+          }
+        });
+        await logInteraction("google_sign_in_failed", { error: msg.slice(0, 500) });
+        console.warn("[MindfulTab] Google sign-in (interactive) failed to persist session", msg);
         sendResponse({ ok: false, error: String(err) });
       }
       return;
@@ -1397,12 +1485,6 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     if (message?.type === "mindfultab/continue-anyway") {
       const { domain, reflection, targetUrl, tabId } = message.payload || {};
-      await traceBoundary("continue_anyway_request", {
-        domain: String(domain || ""),
-        target: cleanUrlForLog(String(targetUrl || "")),
-        hasReflection: Boolean(String(reflection || "").trim()),
-        tabId: Number.isInteger(tabId) ? tabId : null
-      }, sender);
       await appendReflection({
         atIso: nowIso(),
         domain: domain || "",
@@ -1426,10 +1508,6 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (targetUrl && typeof tabId === "number") {
         await EXT_API.tabs.update(tabId, { url: targetUrl });
       }
-      await traceDecision("continue_anyway_completed", {
-        domain: String(domain || ""),
-        target: cleanUrlForLog(String(targetUrl || ""))
-      }, sender);
       sendResponse({ ok: true });
       return;
     }

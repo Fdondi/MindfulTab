@@ -58,11 +58,12 @@
           <p class="subtle">
             Same Gemini backend and Google sign-in flow as
             <a href="https://github.com/Fdondi/MindfulHome" rel="noopener noreferrer" target="_blank">MindfulHome</a>
-            (exchange Google ID token for an app token; nothing to paste).
+            (Google ID token is sent to the backend for each request; nothing to paste).
           </p>
         </div>
         <section class="panel ai-settings-panel">
           <p id="ai-account-status" class="ai-account-status" aria-live="polite">Not signed in.</p>
+          <p id="ai-auth-debug" class="ai-auth-debug" aria-live="polite"></p>
           <div class="ai-auth-actions">
             <button id="ai-google-auth-btn" type="button" class="primary">Sign in with Google</button>
           </div>
@@ -92,6 +93,16 @@
           </div>
         </div>
         <section id="interaction-review" class="panel interactions-panel">
+          <div class="logs-filter-row">
+            <label class="logs-filter-label" for="interaction-search-input">Search logs</label>
+            <input
+              id="interaction-search-input"
+              class="logs-filter-input"
+              type="search"
+              placeholder="Filter by event text, domain, intent, etc."
+              autocomplete="off"
+            />
+          </div>
           <ul id="interaction-list" class="interaction-list"></ul>
           <p id="interaction-empty-state" class="empty hidden">No interactions logged yet.</p>
         </section>

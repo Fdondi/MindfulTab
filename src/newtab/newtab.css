@@ -160,6 +160,21 @@ body {
   max-width: min(560px, 96vw);
 }
 
+.newtab-auth-hint {
+  flex-basis: 100%;
+  order: 1;
+  margin: 0;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #3a3d7a;
+}
+
+.newtab-auth-hint.hidden {
+  display: none;
+}
+
 .top-actions .ext-version {
   align-self: center;
   padding: 0 6px;

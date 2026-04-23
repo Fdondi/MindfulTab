@@ -9,6 +9,7 @@ const ui = {
   aiPanel: document.getElementById("ai-panel"),
   logsPanel: document.getElementById("logs-panel"),
   aiAccountStatus: document.getElementById("ai-account-status"),
+  aiAuthDebug: document.getElementById("ai-auth-debug"),
   aiGoogleAuthBtn: document.getElementById("ai-google-auth-btn"),
   aiRedirectPreview: document.getElementById("ai-redirect-uri-preview"),
   aiBaseUrl: document.getElementById("ai-base-url"),
@@ -17,6 +18,7 @@ const ui = {
   refreshBtn: document.getElementById("refresh-btn"),
   refreshInteractionsBtn: document.getElementById("refresh-interactions-btn"),
   clearInteractionsBtn: document.getElementById("clear-interactions-btn"),
+  interactionSearchInput: document.getElementById("interaction-search-input"),
   forgiveAllBtn: document.getElementById("forgive-all-btn"),
   domainList: document.getElementById("domain-list"),
   interactionList: document.getElementById("interaction-list"),
@@ -26,6 +28,11 @@ const ui = {
   statNegative: document.getElementById("stat-negative"),
   statTotal: document.getElementById("stat-total"),
   statusMessage: document.getElementById("status-message")
+};
+
+const interactionState = {
+  allInteractions: [],
+  searchTerm: ""
 };
 
 async function sendMessage(type, payload = {}) {
@@ -214,8 +221,24 @@ function humanEventLine(item) {
       return `[${ts}] AI settings saved${details.validateIntents ? " (intent validation on)" : ""}`;
     case "google_sign_in_completed":
       return `[${ts}] Signed in with Google for AI backend`;
+    case "google_sign_in_failed":
+      return `[${ts}] Google sign-in failed: ${details.error || "unknown"}`;
     case "google_sign_out":
       return `[${ts}] Signed out from AI backend`;
+    case "google_id_token_refresh_check_started":
+      return `[${ts}] Token refresh check started${details.hasStoredToken ? " (stored token exists)" : " (no stored token)"}`;
+    case "google_id_token_refresh_not_needed":
+      return `[${ts}] Token refresh not needed (stored token still usable)`;
+    case "google_id_token_refresh_skipped_no_stored_token":
+      return `[${ts}] Token refresh skipped (no stored token)`;
+    case "google_id_token_silent_refresh_attempted":
+      return `[${ts}] Silent Google token refresh attempted`;
+    case "google_id_token_refreshed_silent":
+      return `[${ts}] Google ID token refreshed silently${details.refreshedAtMs ? ` (stored at ${new Date(Number(details.refreshedAtMs)).toLocaleString()})` : ""}`;
+    case "google_id_token_silent_refresh_failed":
+      return `[${ts}] Silent Google token refresh failed${details.stage ? ` [${details.stage}]` : ""}: ${details.error || "unknown"}`;
+    case "google_id_token_refresh_skipped_no_oauth":
+      return `[${ts}] Token refresh skipped (OAuth helper unavailable in worker)`;
     default:
       return `[${ts}] ${eventType}`;
   }
@@ -234,6 +257,40 @@ function sessionRowTemplate(session) {
     </div>
     <pre class="interaction-details">${content}</pre>
   `;
+}
+
+function renderFilteredInteractions() {
+  const interactions = Array.isArray(interactionState.allInteractions) ? interactionState.allInteractions : [];
+  const term = String(interactionState.searchTerm || "").trim().toLowerCase();
+  ui.interactionList.innerHTML = "";
+
+  if (!interactions.length) {
+    ui.interactionEmptyState.textContent = "No interactions logged yet.";
+    ui.interactionEmptyState.classList.remove("hidden");
+    return;
+  }
+
+  const sessions = buildSessions(interactions);
+  const filtered = term
+    ? sessions.filter((session) => {
+        const content = session.items.map((item) => humanEventLine(item)).join("\n");
+        return `${session.fileName}\n${content}`.toLowerCase().includes(term);
+      })
+    : sessions;
+
+  if (!filtered.length) {
+    ui.interactionEmptyState.textContent = `No logs match "${interactionState.searchTerm}".`;
+    ui.interactionEmptyState.classList.remove("hidden");
+    return;
+  }
+
+  ui.interactionEmptyState.classList.add("hidden");
+  for (const session of filtered) {
+    const row = document.createElement("li");
+    row.className = "interaction-row";
+    row.innerHTML = sessionRowTemplate(session);
+    ui.interactionList.appendChild(row);
+  }
 }
 
 async function loadDomainSettings() {
@@ -286,22 +343,13 @@ async function loadDomainSettings() {
 async function loadInteractions() {
   const response = await sendMessage("mindfultab/get-interactions");
   if (!response?.ok) return;
+  interactionState.allInteractions = Array.isArray(response.interactions) ? response.interactions : [];
+  renderFilteredInteractions();
+}
 
-  const interactions = Array.isArray(response.interactions) ? response.interactions : [];
-  ui.interactionList.innerHTML = "";
-  if (!interactions.length) {
-    ui.interactionEmptyState.classList.remove("hidden");
-    return;
-  }
-  ui.interactionEmptyState.classList.add("hidden");
-
-  const sessions = buildSessions(interactions);
-  for (const session of sessions) {
-    const row = document.createElement("li");
-    row.className = "interaction-row";
-    row.innerHTML = sessionRowTemplate(session);
-    ui.interactionList.appendChild(row);
-  }
+function handleInteractionSearchInput() {
+  interactionState.searchTerm = String(ui.interactionSearchInput?.value || "").trim();
+  renderFilteredInteractions();
 }
 
 async function handleListClick(target) {
@@ -373,6 +421,24 @@ function renderAiGoogleAuthButton(settings) {
   );
 }
 
+function renderAiAuthDebug(settings) {
+  if (!ui.aiAuthDebug) return;
+  const at = Number(settings?.aiGoogleAuthLastRefreshAtMs || 0);
+  const kind = String(settings?.aiGoogleAuthLastRefreshKind || "").trim();
+  const err = String(settings?.aiGoogleAuthLastRefreshError || "").trim();
+  const parts = [];
+  if (at > 0 && Number.isFinite(at)) {
+    const kindBit = kind ? ` (${kind})` : "";
+    parts.push(`Last token refresh: ${new Date(at).toLocaleString()}${kindBit}`);
+  } else {
+    parts.push("Last token refresh: never");
+  }
+  if (err) {
+    parts.push(`Last error: ${err}`);
+  }
+  ui.aiAuthDebug.textContent = parts.join(" · ");
+}
+
 async function loadAiSettings() {
   const response = await sendMessage("mindfultab/get-raw-settings");
   if (!response?.ok) return;
@@ -381,6 +447,7 @@ async function loadAiSettings() {
   if (ui.aiValidate) ui.aiValidate.checked = Boolean(s.aiIntentValidationEnabled);
   renderAiAccountLine(s);
   renderAiGoogleAuthButton(s);
+  renderAiAuthDebug(s);
 }
 
 async function handleSaveAiSettings() {
@@ -477,6 +544,9 @@ function init() {
   });
   ui.clearInteractionsBtn.addEventListener("click", () => {
     handleClearInteractions().catch(() => {});
+  });
+  ui.interactionSearchInput?.addEventListener("input", () => {
+    handleInteractionSearchInput();
   });
   ui.forgiveAllBtn.addEventListener("click", () => {
     handleForgiveAll().catch(() => {});

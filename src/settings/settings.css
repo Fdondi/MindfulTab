@@ -121,6 +121,15 @@ h1 {
   color: var(--text);
 }
 
+.ai-auth-debug {
+  margin: -6px 0 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: var(--muted);
+  word-break: break-word;
+}
+
 .ai-auth-actions {
   display: flex;
   flex-wrap: wrap;
@@ -271,6 +280,32 @@ button.danger {
 
 .interactions-panel {
   margin-top: 4px;
+}
+
+.logs-filter-row {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.logs-filter-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #4b4c61;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.logs-filter-input {
+  width: 100%;
+  max-width: 420px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
 }
 
 .interactions-panel:target {

@@ -6,8 +6,33 @@ function getReflectionEl() {
   return document.getElementById("reflection-input");
 }
 
+function clearGateAuthHint() {
+  const el = document.getElementById("gate-auth-hint");
+  if (!el) return;
+  el.textContent = "";
+  el.classList.add("hidden");
+}
+
+function showGateAuthHint(message) {
+  const el = document.getElementById("gate-auth-hint");
+  if (!el) return;
+  el.textContent = message || "";
+  if (message) el.classList.remove("hidden");
+  else el.classList.add("hidden");
+}
+
+function gateAuthHintForStartTimer(detail) {
+  const err = String(detail?.error || "");
+  if (/expired/i.test(err)) {
+    showGateAuthHint("AI session expired — sign in again from the MindfulTab new tab page or Settings → AI.");
+    return;
+  }
+  showGateAuthHint("AI sign-in required — use Sign in with Google on the MindfulTab new tab page, or Settings → AI.");
+}
+
 const intentFeedback = self.MINDFULTAB_INTENT_FEEDBACK.createMindfulTabIntentFeedback({
-  getMainReason: () => String(getReflectionEl()?.value || "").trim()
+  getMainReason: () => String(getReflectionEl()?.value || "").trim(),
+  onAuthSessionRequired: gateAuthHintForStartTimer
 });
 
 function getParams() {
@@ -29,10 +54,6 @@ async function logInteraction(eventType, details = {}) {
   } catch (_) {
     // Best-effort logging only.
   }
-}
-
-async function traceDecision(name, details = {}) {
-  await logInteraction(`trace_decision_${name}`, details);
 }
 
 async function continueAnyway() {
@@ -61,6 +82,7 @@ function getTimerMinutes() {
  * @returns {Promise<boolean>} true if OK to continue navigation
  */
 async function startTimerIfNeeded(confirmedLongSession = false) {
+  clearGateAuthHint();
   const { targetUrl, requireTimer } = getParams();
   if (!requireTimer) return true;
 
@@ -83,7 +105,7 @@ async function startTimerIfNeeded(confirmedLongSession = false) {
     }
   });
 
-  const result = await intentFeedback.handleStartTimerResponse(resp, { traceDecision });
+  const result = await intentFeedback.handleStartTimerResponse(resp);
   return result.ok;
 }
 

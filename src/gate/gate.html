@@ -94,6 +94,18 @@
         margin-bottom: 0;
       }
 
+      .gate-auth-hint {
+        margin: 12px 0 0;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.35;
+        color: #2c3166;
+      }
+
+      .gate-auth-hint.hidden {
+        display: none;
+      }
+
       .actions {
         margin-top: 14px;
         display: flex;
@@ -148,6 +160,7 @@
           <div class="timer-wheel-highlight"></div>
         </div>
       </section>
+      <p id="gate-auth-hint" class="gate-auth-hint hidden" aria-live="polite"></p>
       <div class="actions">
         <button id="continue-btn" type="button">Continue anyway</button>
       </div>
