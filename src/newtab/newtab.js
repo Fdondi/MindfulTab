@@ -72,10 +72,10 @@ function showNewtabAuthHint(message) {
 function newtabAuthHintForStartTimer(detail) {
   const err = String(detail?.error || "");
   if (/expired/i.test(err)) {
-    showNewtabAuthHint("AI session expired — use Sign in with Google above.");
+    showNewtabAuthHint("AI backend session expired — use Sign in with Google above.");
     return;
   }
-  showNewtabAuthHint("Use Sign in with Google above for AI checks.");
+  showNewtabAuthHint("Use Sign in with Google above to create an AI backend session.");
 }
 
 const intentFeedback = self.MINDFULTAB_INTENT_FEEDBACK.createMindfulTabIntentFeedback({

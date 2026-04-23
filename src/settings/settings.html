@@ -56,9 +56,9 @@
       <section id="ai-panel" class="tab-panel hidden">
         <div class="panel-head">
           <p class="subtle">
-            Same Gemini backend and Google sign-in flow as
+            Same Gemini backend and auth flow as
             <a href="https://github.com/Fdondi/MindfulHome" rel="noopener noreferrer" target="_blank">MindfulHome</a>
-            (Google ID token is sent to the backend for each request; nothing to paste).
+            (Google sign-in exchanges for a long-lived backend session token; nothing to paste).
           </p>
         </div>
         <section class="panel ai-settings-panel">
@@ -70,7 +70,7 @@
           <p class="subtle ai-oauth-hint">
             The Google Cloud OAuth client for this backend must list your extension redirect URL:
             <code id="ai-redirect-uri-preview"></code>
-            (shown for your current install; add it in Google Cloud Console if sign-in fails).
+            (needed only for first sign-in or re-auth if the backend session expires).
           </p>
           <label class="field-label" for="ai-base-url">Backend base URL</label>
           <input id="ai-base-url" class="field-input" type="url" autocomplete="off" />

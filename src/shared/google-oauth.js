@@ -35,7 +35,7 @@ function parseIdTokenFromWebAuthResult(responseUrl) {
   return params.get("id_token");
 }
 
-/** True when stored Google ID token is present and not expiring within ~15s (JWT exp). */
+/** True when stored backend session token is present and not expiring within ~15s. */
 function mindfultabAiAuthUsable(settings) {
   const t = String(settings?.aiBackendToken || "").trim();
   if (!t) return false;

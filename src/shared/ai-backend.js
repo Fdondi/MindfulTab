@@ -1,6 +1,6 @@
 /**
  * MindfulHome-compatible Gemini backend client (same /api/generate contract as MindfulHome's BackendClient).
- * Authorization must be a Google OAuth2 ID token; this backend no longer implements /api/auth/exchange.
+ * Auth flow matches MindfulHome: Google ID token -> /api/auth/exchange -> long-lived backend session token.
  * @see https://github.com/Fdondi/MindfulHome/blob/main/app/src/main/java/com/mindfulhome/ai/backend/BackendClient.kt
  */
 const DEFAULT_AI_BACKEND_BASE_URL = "https://my-gemini-backend-834588824353.europe-west1.run.app";
@@ -95,11 +95,22 @@ function parseErrorFromBody(body, status) {
   return `HTTP ${status}`;
 }
 
-async function checkBackendAuthStatus(baseUrl, googleIdToken) {
+function parseAuthCodeFromBody(body) {
+  try {
+    const obj = JSON.parse(body);
+    const detail = obj?.detail;
+    if (detail && typeof detail === "object" && typeof detail.code === "string") {
+      return detail.code;
+    }
+  } catch (_) {}
+  return "";
+}
+
+async function checkBackendAuthStatus(baseUrl, backendSessionToken) {
   const root = String(baseUrl || DEFAULT_AI_BACKEND_BASE_URL).replace(/\/$/, "");
-  const auth = String(googleIdToken || "").trim();
+  const auth = String(backendSessionToken || "").trim();
   if (!auth) {
-    throw new Error("Missing Google ID token.");
+    throw new Error("Missing backend session token.");
   }
   const res = await fetch(`${root}/api/auth/status`, {
     method: "GET",
@@ -111,6 +122,83 @@ async function checkBackendAuthStatus(baseUrl, googleIdToken) {
     err.httpStatus = res.status;
     throw err;
   }
+}
+
+async function exchangeGoogleIdTokenForSession(baseUrl, googleIdToken) {
+  const root = String(baseUrl || DEFAULT_AI_BACKEND_BASE_URL).replace(/\/$/, "");
+  const idToken = String(googleIdToken || "").trim();
+  if (!idToken) {
+    throw new Error("Missing Google ID token.");
+  }
+  const res = await fetch(`${root}/api/auth/exchange`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    body: JSON.stringify({ google_id_token: idToken })
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(parseErrorFromBody(text, res.status));
+    err.httpStatus = res.status;
+    err.backendCode = parseAuthCodeFromBody(text);
+    throw err;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch (_) {
+    throw new Error("AI backend returned non-JSON auth exchange response.");
+  }
+  const sessionToken = String(payload?.session_token || "").trim();
+  const expiresAt = Number(payload?.expires_at || 0);
+  const email = String(payload?.email || "").trim();
+  if (!sessionToken) {
+    throw new Error("AI backend exchange returned no session_token.");
+  }
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0) {
+    throw new Error("AI backend exchange returned invalid expires_at.");
+  }
+  return { sessionToken, expiresAt, email };
+}
+
+async function refreshBackendSession(baseUrl, backendSessionToken) {
+  const root = String(baseUrl || DEFAULT_AI_BACKEND_BASE_URL).replace(/\/$/, "");
+  const auth = String(backendSessionToken || "").trim();
+  if (!auth) {
+    throw new Error("Missing backend session token.");
+  }
+  const res = await fetch(`${root}/api/auth/refresh`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      Authorization: `Bearer ${auth}`
+    },
+    body: JSON.stringify({})
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    const err = new Error(parseErrorFromBody(text, res.status));
+    err.httpStatus = res.status;
+    err.backendCode = parseAuthCodeFromBody(text);
+    throw err;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch (_) {
+    throw new Error("AI backend returned non-JSON auth refresh response.");
+  }
+  const sessionToken = String(payload?.session_token || "").trim();
+  const expiresAt = Number(payload?.expires_at || 0);
+  const email = String(payload?.email || "").trim();
+  if (!sessionToken) {
+    throw new Error("AI backend refresh returned no session_token.");
+  }
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0) {
+    throw new Error("AI backend refresh returned invalid expires_at.");
+  }
+  return { sessionToken, expiresAt, email };
 }
 
 async function mindfultabBackendGenerate({ baseUrl, token, model, contents, tools }) {
@@ -235,7 +323,7 @@ async function validateIntent({ settings, durationMinutes, reason, confirmedLong
     });
   } catch (err) {
     if (err && err.httpStatus === 401) {
-      const authErr = new Error("AI backend rejected the Google ID token (401). Sign in with Google again.");
+      const authErr = new Error("AI backend rejected the session token (401). Sign in with Google again.");
       authErr.httpStatus = 401;
       throw authErr;
     }
@@ -305,7 +393,7 @@ async function requestTimeExtension({ settings, session, userMessage }) {
     });
   } catch (err) {
     if (err && err.httpStatus === 401) {
-      const authErr = new Error("AI backend rejected the Google ID token (401). Sign in with Google again.");
+      const authErr = new Error("AI backend rejected the session token (401). Sign in with Google again.");
       authErr.httpStatus = 401;
       throw authErr;
     }
@@ -329,5 +417,7 @@ self.MINDFULTAB_AI = {
   shouldValidateIntent,
   validateIntent,
   requestTimeExtension,
-  checkBackendAuthStatus
+  checkBackendAuthStatus,
+  exchangeGoogleIdTokenForSession,
+  refreshBackendSession
 };

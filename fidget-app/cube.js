@@ -523,8 +523,8 @@
     if (Math.abs(tanOx) < 0.08) {
       sx = 200; sy = 200;
     } else {
-      sx = DEPTH * Math.sin(oyRad) / tanOx;
-      sy = DEPTH * Math.cos(oyRad) / tanOx;
+      sx = -DEPTH * Math.sin(oyRad) / tanOx;
+      sy = -DEPTH * Math.cos(oyRad) / tanOx;
     }
     widgetRefs.mirrorOffset.style.transform =
       "translate(" + sx.toFixed(1) + "px," + sy.toFixed(1) + "px)";

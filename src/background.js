@@ -413,10 +413,13 @@ function isAutoBypassTimerReason(reason) {
   return r === AUTO_BYPASS_TIMER_REASON || r.includes("Auto-started after bypassing");
 }
 
-/** Google ID token present and JWT not past expiry (see shared/google-oauth.js). */
+/** Backend session token present and not expiring within ~15s. */
 function hasUsableBackendAppToken(settings) {
-  const fn = self.MINDFULTAB_GOOGLE_OAUTH?.mindfultabAiAuthUsable;
-  return typeof fn === "function" ? fn(settings) : false;
+  const token = String(settings?.aiBackendToken || "").trim();
+  if (!token) return false;
+  const exp = Number(settings?.aiBackendTokenExpiresAtMs || 0);
+  if (!exp || !Number.isFinite(exp)) return false;
+  return exp > Date.now() + 15_000;
 }
 
 async function clearBackendAuthInSettings() {
@@ -435,32 +438,25 @@ async function clearBackendAuthInSettings() {
 
 /**
  * @param {string} idToken
- * @param {{ source?: "silent" | "interactive" }} [options]
+ * @param {{ source?: "interactive" | "session_refresh" }} [options]
  */
 async function persistGoogleIdSession(idToken, options = {}) {
-  const source = options.source === "silent" ? "silent" : "interactive";
+  const source = options.source === "session_refresh" ? "session_refresh" : "interactive";
   const settings = await getSettings();
   const baseUrl = settings.aiBackendBaseUrl || self.MINDFULTAB_AI.DEFAULT_AI_BACKEND_BASE_URL;
-  await self.MINDFULTAB_AI.checkBackendAuthStatus(baseUrl, idToken);
-  let email = "";
-  let expiresAtMs = 0;
-  try {
-    const payload = self.MINDFULTAB_GOOGLE_OAUTH.decodeJwtPayload(idToken);
-    email = String(payload.email || payload.sub || "").trim();
-    const exp = Number(payload.exp);
-    if (Number.isFinite(exp)) {
-      expiresAtMs = exp * 1000;
-    }
-  } catch (err) {
-    throw new Error(`Invalid Google ID token: ${String(err)}`);
+  const exchanged = await self.MINDFULTAB_AI.exchangeGoogleIdTokenForSession(baseUrl, idToken);
+  const sessionToken = String(exchanged.sessionToken || "").trim();
+  const expiresAtMs = Number(exchanged.expiresAt || 0) * 1000;
+  const email = String(exchanged.email || "").trim();
+  if (!sessionToken) throw new Error("Backend exchange returned no session token.");
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0) {
+    throw new Error("Backend exchange returned invalid session expiry.");
   }
-  if (!expiresAtMs) {
-    throw new Error("Google ID token missing exp claim.");
-  }
+  await self.MINDFULTAB_AI.checkBackendAuthStatus(baseUrl, sessionToken);
   const refreshedAt = Date.now();
   const next = {
     ...settings,
-    aiBackendToken: idToken,
+    aiBackendToken: sessionToken,
     aiBackendTokenExpiresAtMs: expiresAtMs,
     aiGoogleEmail: email,
     aiGoogleAuthLastRefreshAtMs: refreshedAt,
@@ -473,7 +469,7 @@ async function persistGoogleIdSession(idToken, options = {}) {
 /**
  * @param {{ ok: false, error: string, stage?: string }} result
  */
-async function recordGoogleAuthSilentRefreshFailure(result) {
+async function recordBackendSessionRefreshFailure(result) {
   const error = String(result?.error || "unknown").slice(0, 500);
   const stage = String(result?.stage || "").slice(0, 80);
   const line = stage ? `${stage}: ${error}` : error;
@@ -484,86 +480,72 @@ async function recordGoogleAuthSilentRefreshFailure(result) {
       aiGoogleAuthLastRefreshError: line
     }
   });
-  await logInteraction("google_id_token_silent_refresh_failed", {
+  await logInteraction("backend_session_refresh_failed", {
     error,
     stage: stage || undefined
   });
-  console.warn("[MindfulTab] Silent Google ID token refresh failed", { error, stage: stage || undefined });
+  console.warn("[MindfulTab] Backend session refresh failed", { error, stage: stage || undefined });
 }
 
 async function getSettingsWithFreshAiTokenIfNeeded() {
   let settings = await getSettings();
-  await logInteraction("google_id_token_refresh_check_started", {
+  await logInteraction("backend_session_refresh_check_started", {
     hasStoredToken: Boolean(String(settings.aiBackendToken || "").trim()),
     tokenExpiresAtMs: Number(settings.aiBackendTokenExpiresAtMs || 0)
   });
   if (hasUsableBackendAppToken(settings)) {
-    await logInteraction("google_id_token_refresh_not_needed", {
+    await logInteraction("backend_session_refresh_not_needed", {
       tokenExpiresAtMs: Number(settings.aiBackendTokenExpiresAtMs || 0)
     });
     return settings;
   }
   if (!String(settings.aiBackendToken || "").trim()) {
-    await logInteraction("google_id_token_refresh_skipped_no_stored_token", {});
+    await logInteraction("backend_session_refresh_skipped_no_stored_token", {});
     return settings;
   }
-  const oauth = self.MINDFULTAB_GOOGLE_OAUTH;
-  const tryDetailed = oauth?.mindfultabTrySilentGoogleIdTokenRefreshDetailed;
-  const tryLegacy = oauth?.mindfultabTrySilentGoogleIdTokenRefresh;
-  if (!tryDetailed && !tryLegacy) {
-    await logInteraction("google_id_token_refresh_skipped_no_oauth", {});
-    return settings;
-  }
-  await logInteraction("google_id_token_silent_refresh_attempted", {});
-  let result;
-  if (tryDetailed) {
-    try {
-      result = await tryDetailed(EXT_API);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await recordGoogleAuthSilentRefreshFailure({
-        error: `helper_throw: ${msg}`,
-        stage: "helper_throw"
-      });
-      return settings;
-    }
-  } else {
-    let idToken = null;
-    try {
-      idToken = await tryLegacy(EXT_API);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await recordGoogleAuthSilentRefreshFailure({
-        error: `legacy_helper_throw: ${msg}`,
-        stage: "legacy_helper_throw"
-      });
-      return settings;
-    }
-    result = idToken
-      ? { ok: true, idToken }
-      : {
-          ok: false,
-          error: "Silent refresh returned no token (legacy helper).",
-          stage: "legacy_null"
-        };
-  }
-  if (!result.ok) {
-    await recordGoogleAuthSilentRefreshFailure(result);
-    return settings;
-  }
+  await logInteraction("backend_session_refresh_attempted", {});
   try {
-    await persistGoogleIdSession(result.idToken, { source: "silent" });
+    const baseUrl = settings.aiBackendBaseUrl || self.MINDFULTAB_AI.DEFAULT_AI_BACKEND_BASE_URL;
+    const refreshed = await self.MINDFULTAB_AI.refreshBackendSession(baseUrl, settings.aiBackendToken);
+    const sessionToken = String(refreshed.sessionToken || "").trim();
+    const expiresAtMs = Number(refreshed.expiresAt || 0) * 1000;
+    const email = String(refreshed.email || settings.aiGoogleEmail || "").trim();
+    if (!sessionToken) {
+      throw new Error("Backend refresh returned no session token.");
+    }
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0) {
+      throw new Error("Backend refresh returned invalid session expiry.");
+    }
+    const refreshedAt = Date.now();
+    await setStorageValues({
+      [STORAGE_KEYS.SETTINGS]: {
+        ...settings,
+        aiBackendToken: sessionToken,
+        aiBackendTokenExpiresAtMs: expiresAtMs,
+        aiGoogleEmail: email,
+        aiGoogleAuthLastRefreshAtMs: refreshedAt,
+        aiGoogleAuthLastRefreshKind: "session_refresh",
+        aiGoogleAuthLastRefreshError: ""
+      }
+    });
   } catch (err) {
+    if (err && err.httpStatus === 401) {
+      await clearBackendAuthInSettings();
+      await logInteraction("backend_session_refresh_failed_need_sign_in", {
+        error: String(err?.message || "401")
+      });
+      return getSettings();
+    }
     const msg = err instanceof Error ? err.message : String(err);
-    await recordGoogleAuthSilentRefreshFailure({ error: `persist: ${msg}`, stage: "backend_or_jwt" });
+    await recordBackendSessionRefreshFailure({ error: msg, stage: "refresh" });
     return settings;
   }
   const fresh = await getSettings();
-  await logInteraction("google_id_token_refreshed_silent", {
+  await logInteraction("backend_session_refreshed", {
     refreshedAtMs: fresh.aiGoogleAuthLastRefreshAtMs,
     tokenExpiresAtMs: fresh.aiBackendTokenExpiresAtMs
   });
-  console.info("[MindfulTab] Google ID token refreshed silently", {
+  console.info("[MindfulTab] Backend session token refreshed", {
     refreshedAtMs: fresh.aiGoogleAuthLastRefreshAtMs,
     tokenExpiresAtMs: fresh.aiBackendTokenExpiresAtMs
   });
@@ -1163,7 +1145,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
               ok: false,
               code: "need_google_sign_in",
               error:
-                "AI intent check requires a signed-in Google session. Open MindfulTab settings, AI tab, and use Sign in with Google."
+                "AI intent check requires an active AI backend session. Open MindfulTab settings, AI tab, and use Sign in with Google."
             });
             return;
           }
@@ -1181,7 +1163,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
               sendResponse({
                 ok: false,
                 code: "need_google_sign_in",
-                error: "Your AI session expired. Open MindfulTab settings → AI and sign in with Google again."
+                error: "Your AI backend session expired. Open MindfulTab settings -> AI and sign in with Google again."
               });
               return;
             }
@@ -1218,7 +1200,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({
             ok: false,
             code: "need_google_sign_in",
-            error: "Sign in with Google under MindfulTab settings → AI to request more time."
+            error: "Sign in with Google under MindfulTab settings -> AI to create an AI backend session."
           });
           return;
         }
@@ -1258,7 +1240,7 @@ EXT_API.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({
               ok: false,
               code: "need_google_sign_in",
-              error: "Your AI session expired. Sign in again under settings → AI."
+              error: "Your AI backend session expired. Sign in again under settings -> AI."
             });
             return;
           }

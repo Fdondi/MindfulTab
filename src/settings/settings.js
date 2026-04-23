@@ -226,17 +226,25 @@ function humanEventLine(item) {
     case "google_sign_out":
       return `[${ts}] Signed out from AI backend`;
     case "google_id_token_refresh_check_started":
+    case "backend_session_refresh_check_started":
       return `[${ts}] Token refresh check started${details.hasStoredToken ? " (stored token exists)" : " (no stored token)"}`;
     case "google_id_token_refresh_not_needed":
+    case "backend_session_refresh_not_needed":
       return `[${ts}] Token refresh not needed (stored token still usable)`;
     case "google_id_token_refresh_skipped_no_stored_token":
+    case "backend_session_refresh_skipped_no_stored_token":
       return `[${ts}] Token refresh skipped (no stored token)`;
     case "google_id_token_silent_refresh_attempted":
-      return `[${ts}] Silent Google token refresh attempted`;
+    case "backend_session_refresh_attempted":
+      return `[${ts}] Backend session token refresh attempted`;
     case "google_id_token_refreshed_silent":
-      return `[${ts}] Google ID token refreshed silently${details.refreshedAtMs ? ` (stored at ${new Date(Number(details.refreshedAtMs)).toLocaleString()})` : ""}`;
+    case "backend_session_refreshed":
+      return `[${ts}] Backend session token refreshed${details.refreshedAtMs ? ` (stored at ${new Date(Number(details.refreshedAtMs)).toLocaleString()})` : ""}`;
     case "google_id_token_silent_refresh_failed":
-      return `[${ts}] Silent Google token refresh failed${details.stage ? ` [${details.stage}]` : ""}: ${details.error || "unknown"}`;
+    case "backend_session_refresh_failed":
+      return `[${ts}] Backend session token refresh failed${details.stage ? ` [${details.stage}]` : ""}: ${details.error || "unknown"}`;
+    case "backend_session_refresh_failed_need_sign_in":
+      return `[${ts}] Backend session refresh failed (re-auth required): ${details.error || "401 unauthorized"}`;
     case "google_id_token_refresh_skipped_no_oauth":
       return `[${ts}] Token refresh skipped (OAuth helper unavailable in worker)`;
     default:

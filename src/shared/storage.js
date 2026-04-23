@@ -26,17 +26,17 @@ const DEFAULT_SETTINGS = {
   },
   /** Same default base URL as MindfulHome BackendClient. */
   aiBackendBaseUrl: "https://my-gemini-backend-834588824353.europe-west1.run.app",
-  /** Google OAuth2 ID token sent as Bearer to the AI backend (verified server-side). */
+  /** Long-lived backend session token (minted by /api/auth/exchange). */
   aiBackendToken: "",
-  /** Epoch ms when aiBackendToken expires (JWT `exp`, from sign-in or silent refresh). */
+  /** Epoch ms when aiBackendToken expires (from backend `expires_at`). */
   aiBackendTokenExpiresAtMs: 0,
-  /** Email from Google ID token at sign-in (display only). */
+  /** Email returned by backend auth exchange/refresh (display only). */
   aiGoogleEmail: "",
-  /** Epoch ms when a new ID token was last stored (interactive sign-in or silent refresh). */
+  /** Epoch ms when a new backend session token was last stored. */
   aiGoogleAuthLastRefreshAtMs: 0,
-  /** "interactive" | "silent" — how the last stored token was obtained. */
+  /** "interactive" | "session_refresh" - how the last token was obtained. */
   aiGoogleAuthLastRefreshKind: "",
-  /** Last silent-refresh or interactive persist error (cleared on successful token storage). */
+  /** Last backend session refresh or interactive sign-in error (cleared on success). */
   aiGoogleAuthLastRefreshError: "",
   /** When true, non-empty reasons are checked via /api/generate before starting a timer (requires sign-in). */
   aiIntentValidationEnabled: false
